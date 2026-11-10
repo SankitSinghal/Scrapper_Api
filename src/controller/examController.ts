@@ -123,7 +123,7 @@ export const getExamById = async (
       .select("-links.advertisementFilePath")
       .lean();
 
-    if (!exam || /policies-rules-guidelines|overviewofibps/i.test(exam.links?.sourceUrl)) {
+    if (!exam || /policies-rules-guidelines|overviewofibps/i.test(exam.links?.sourceUrl ?? "")) {
       res.status(404).json({
         success: false,
         message: "Exam not found",
@@ -156,10 +156,7 @@ export const getAdmitCard = async (
       });
       return;
     }
-
-    const exam = await Exam.findById(id).select(
-      "jobTitle links.admitCardUrl"
-    );
+    const exam = await Exam.findById(id).select("title links importantDates");
 
     if (!exam) {
       res.status(404).json({
@@ -169,12 +166,16 @@ export const getAdmitCard = async (
       return;
     }
 
+    // Type assertion to bypass strict missing property errors if TypeScript interface needs updating
+    const examData = exam as any;
+    const admitCardLink = examData.links?.admitCardUrl || examData.importantDates?.admitCardDate;
+
     res.status(200).json({
       success: true,
       data: {
-        jobTitle: exam.jobTitle,
-        admitCardUrl: exam.links?.admitCardUrl,
-        available: Boolean(exam.links?.admitCardUrl),
+        jobTitle: examData.title,
+        admitCardUrl: admitCardLink,
+        available: Boolean(admitCardLink && admitCardLink !== "To be announced" && !admitCardLink.includes("Days before")),
       },
     });
   } catch (error) {
@@ -209,7 +210,7 @@ export const saveAdvertisement = async (
     }
 
     const exam = await Exam.findById(id).select(
-      "jobTitle links.sourceUrl links.officialNotificationUrl links.advertisementFilePath"
+      "title links.sourceUrl links.notificationPdf links.advertisementFilePath"
     );
 
     if (!exam) {
@@ -220,7 +221,7 @@ export const saveAdvertisement = async (
       return;
     }
 
-    const targetUrl = exam.links?.officialNotificationUrl || exam.links?.sourceUrl;
+    const targetUrl = exam.links?.notificationPdf || exam.links?.sourceUrl;
 
     if (!targetUrl?.trim()) {
       res.status(400).json({
@@ -350,7 +351,7 @@ export const saveAdvertisement = async (
         new: true,
         runValidators: true,
       }
-    ).select("jobTitle links.advertisementFilePath");
+    ).select("title links.advertisementFilePath");
 
     if (!updatedExam) {
       res.status(404).json({
@@ -367,7 +368,7 @@ export const saveAdvertisement = async (
       message: "Advertisement downloaded and saved successfully",
       data: {
         examId: updatedExam._id,
-        jobTitle: updatedExam.jobTitle,
+        jobTitle: updatedExam.title,
         advertisementFilePath: updatedExam.links?.advertisementFilePath,
         fileSize: pdfBuffer.length,
       },

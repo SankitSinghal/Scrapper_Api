@@ -710,6 +710,38 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
     };
   };
 
+  const parseAgeLimitData = (text: string): { minAge: string; maxAge: string; relaxations?: string } => {
+    const defaultAge = { minAge: "18", maxAge: "30", relaxations: "As per rules" };
+    if (!text || typeof text !== "string") return defaultAge;
+
+    const cleanText = text.replace(/\s+/g, " ");
+    let minAge = "18";
+    let maxAge = "30";
+
+    const minMatch = cleanText.match(/(?:minimum\s*age|min\.?\s*age|not\s*less\s*than|above)\s*[:\s-]*(\d{1,2})\s*years?/i);
+    if (minMatch && minMatch[1]) {
+      minAge = minMatch[1];
+    }
+
+    const maxMatch = cleanText.match(/(?:maximum\s*age|max\.?\s*age|not\s*more\s*than|below|up\s*to)\s*[:\s-]*(\d{1,2})\s*years?/i);
+    if (maxMatch && maxMatch[1]) {
+      maxAge = maxMatch[1];
+    }
+
+    if (minAge === "18" && maxAge === "30") {
+      const rangeMatch = cleanText.match(/\b(18|20|21)\s*(?:to|-)\s*(28|30|32|35)\s*years?/i);
+      if (rangeMatch) {
+        minAge = rangeMatch[1];
+        maxAge = rangeMatch[2];
+      }
+    }
+
+    const relaxationMatch = cleanText.match(/(?:age\s*relaxation|relaxation\s*of\s*upper\s*age)[^.]*\./i);
+    const relaxations = relaxationMatch ? relaxationMatch[0] : "OBC: 3 Yrs, SC/ST: 5 Yrs";
+
+    return { minAge, maxAge, relaxations };
+  };
+
   const extractEligibility = (text: string): { overview: string; qualification?: string } => {
     if (!text) return { overview: "" };
 
@@ -745,7 +777,7 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
 
     return {
       overview: cleanOverviewText(overview),
-      qualification: detectedQualification
+      qualification: detectedQualification,
     };
   };
 
@@ -778,7 +810,9 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
           },
           ageLimit: {
             minAge: "20",
-            maxAge: "30"
+            maxAge: "30",
+            cutoffDate: "As per official notification",
+            relaxations: "OBC: 3 Yrs, SC/ST: 5 Yrs"
           },
           links: {
             applyOnline: candidate.sourceUrl,
@@ -803,6 +837,7 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
     
     let vacancyData = parseVacanciesData(aggregatedText);
     let feeData = parseCategoryFees(aggregatedText);
+    let ageData = parseAgeLimitData(aggregatedText);
 
     let advertisementPdf = candidate.advertisementUrl
       ? { url: candidate.advertisementUrl, label: "advertisement" }
@@ -867,10 +902,11 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
             paymentMode: "Online (UPI, Net Banking, Debit/Credit Card)"
           },
           ageLimit: {
-            minAge: "20",
-            maxAge: "30",
-            relaxations: "OBC 3 Years, SC/ST 5 Years as per rules"
-          },
+          minAge: ageData.minAge,
+          maxAge: ageData.maxAge,
+          cutoffDate: "As per official notification",
+          relaxations: ageData.relaxations
+        },
           links: {
             applyOnline: candidate.sourceUrl,
             notificationPdf: advertisementUrl,
@@ -918,10 +954,11 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
         paymentMode: "Online"
       },
       ageLimit: {
-        minAge: "20",
-        maxAge: "30",
-        relaxations: "OBC 3 Years, SC/ST 5 Years as per rules"
-      },
+      minAge: ageData.minAge,       // e.g., "20"
+      maxAge: ageData.maxAge,       // e.g., "30"
+      cutoffDate: "As per official notification",
+      relaxations: ageData.relaxations
+  },
       links: {
         applyOnline: candidate.sourceUrl,
         notificationPdf: candidate.advertisementUrl || "",
@@ -938,6 +975,7 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
   }
 
   let saved = 0;
+  let dataChangesDetected = 0;
 
   for (const [sourceUrl, examData] of results.entries()) {
     const exam = examData as any;
@@ -947,6 +985,28 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
       .createHash("sha256")
       .update(validSourceUrl)
       .digest("hex");
+
+      const existingExam = await Exam.findOne({ "links.sourceUrl": sourceUrl });
+
+      if (existingExam && existingExam.importantDates) {
+      const oldDates = existingExam.importantDates;
+      const newDates = exam.importantDates || {};
+
+      // 2. Compare critical dates to see if anything changed on the website
+      if (
+        oldDates.applyStart !== newDates.applyStart ||
+        oldDates.applyEnd !== newDates.applyEnd ||
+        oldDates.examDate !== newDates.examDate ||
+        oldDates.admitCardDate !== newDates.admitCardDate ||
+        oldDates.resultDate !== newDates.resultDate
+      ) {
+        dataChangesDetected++;
+        
+        console.warn(`[IBPS Schedule Update Detected] Exam: "${exam.title}"`);
+        console.log(`   - Old Exam Date: ${oldDates.examDate || "N/A"} -> New Exam Date: ${newDates.examDate || "N/A"}`);
+        console.log(`   - Old Last Date: ${oldDates.applyEnd || "N/A"} -> New Last Date: ${newDates.applyEnd || "N/A"}`);
+      }
+    }
 
     await Exam.updateOne(
       { "links.sourceUrl": sourceUrl },

@@ -4,7 +4,9 @@ export interface ILinks {
   applyOnline?: string;
   notificationPdf?: string;
   officialWebsite?: string;
+  officialNotificationUrl?: string;
   sourceUrl?: string;
+  advertisementFilePath?: string;
 }
 
 const linksSchema = new Schema<ILinks>(
@@ -12,7 +14,9 @@ const linksSchema = new Schema<ILinks>(
     applyOnline: { type: String, trim: true },
     notificationPdf: { type: String, trim: true },
     officialWebsite: { type: String, trim: true },
+    officialNotificationUrl: { type: String, trim: true }, 
     sourceUrl: { type: String, trim: true },
+    advertisementFilePath: { type: String, trim: true },
   },
   { _id: false }
 );

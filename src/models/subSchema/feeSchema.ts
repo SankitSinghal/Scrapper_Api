@@ -1,18 +1,18 @@
 import { Schema } from "mongoose";
 
 export interface IFees {
-  generalObc: string;       // REQUIRED (e.g., "100", "0")
-  scStPwdFemale: string;    // REQUIRED (e.g., "0", "50")
-  paymentMode?: string;     // Optional
+  generalObc: number;       
+  scStPwdFemale: number;    
+  paymentMode?: string;     
 }
 
 export const feesSchema = new Schema<IFees>(
   {
-    generalObc: { type: String, required: true, trim: true },
-    scStPwdFemale: { type: String, required: true, trim: true },
+    generalObc: { type: Number, required: true },
+    scStPwdFemale: { type: Number, required: true },
     paymentMode: { type: String, trim: true },
   },
-  { _id: false }
+  { _id: false }   
 );
 
 export default feesSchema;
