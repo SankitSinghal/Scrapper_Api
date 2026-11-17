@@ -364,6 +364,7 @@ const getPdfLinks = (
   $: cheerio.CheerioAPI,
   baseUrl: string,
 ): Array<{ url: string; label: string }> => {
+ 
   const links = new Map<string, string>();
 
   $("a[href]").each((_index, element) => {
@@ -417,6 +418,8 @@ const getAdmitCardUrl = (
     );
 
     if (!/admit\s*card|call\s*letter|hall\s*ticket|download.*call/i.test(surroundingText)) {
+      console.log("🔍 Found potential admit card text:", surroundingText); // 💡 DEBUG LOG
+      console.log("🔍 Found href:", href);
       return;
     }
 
@@ -427,6 +430,7 @@ const getAdmitCardUrl = (
 
       if (isAllowedHttpsUrl(url.href)) {
         result = url.href;
+        console.log("✅ Valid Admit Card URL extracted:", result);
       }
     } catch {
       // Ignore malformed URLs.
@@ -444,8 +448,6 @@ const getAdmitCardUrl = (
 
   return result;
 };
-
-
 
 export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
   if (!isAllowedHttpsUrl(IBPS_UPDATES_URL)) {
@@ -710,76 +712,124 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
     };
   };
 
+  
   const parseAgeLimitData = (text: string): { minAge: string; maxAge: string; relaxations?: string } => {
-    const defaultAge = { minAge: "18", maxAge: "30", relaxations: "As per rules" };
-    if (!text || typeof text !== "string") return defaultAge;
+  const defaultAge = { minAge: "20", maxAge: "30", relaxations: "OBC: 3 Yrs, SC/ST: 5 Yrs" };
+  if (!text || typeof text !== "string") return defaultAge;
 
-    const cleanText = text.replace(/\s+/g, " ");
-    let minAge = "18";
-    let maxAge = "30";
+  const cleanText = text.replace(/\s+/g, " ");
+  let minAge = "";
+  let maxAge = "";
 
-    const minMatch = cleanText.match(/(?:minimum\s*age|min\.?\s*age|not\s*less\s*than|above)\s*[:\s-]*(\d{1,2})\s*years?/i);
+  // 1. Try to catch direct ranges first (e.g., "20 to 30 years", "21-30 years", "Between 20 and 30 years")
+  const rangeMatch = cleanText.match(/(?:between\s*)?(\d{2})\s*(?:to|and|[-–])\s*(\d{2})\s*years?/i);
+  if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
+    minAge = rangeMatch[1];
+    maxAge = rangeMatch[2];
+  }
+
+  // 2. If no range found, search for specific minimum age phrases
+  if (!minAge) {
+    const minMatch = cleanText.match(/(?:minimum\s*age|min\.?\s*age|not\s*less\s*than|not\s*below|above)\s*[:\s-]*(\d{1,2})\s*years?/i);
     if (minMatch && minMatch[1]) {
       minAge = minMatch[1];
     }
+  }
 
-    const maxMatch = cleanText.match(/(?:maximum\s*age|max\.?\s*age|not\s*more\s*than|below|up\s*to)\s*[:\s-]*(\d{1,2})\s*years?/i);
+  // 3. If no max found, search for specific maximum age phrases
+  if (!maxAge) {
+    const maxMatch = cleanText.match(/(?:maximum\s*age|max\.?\s*age|not\s*more\s*than|not\s*above|below|up\s*to)\s*[:\s-]*(\d{1,2})\s*years?/i);
     if (maxMatch && maxMatch[1]) {
       maxAge = maxMatch[1];
     }
+  }
 
-    if (minAge === "18" && maxAge === "30") {
-      const rangeMatch = cleanText.match(/\b(18|20|21)\s*(?:to|-)\s*(28|30|32|35)\s*years?/i);
-      if (rangeMatch) {
-        minAge = rangeMatch[1];
-        maxAge = rangeMatch[2];
-      }
+  // 4. Final fallback defaults if nothing matched
+  if (!minAge) minAge = "20";
+  if (!maxAge) maxAge = "30";
+
+  // Extract relaxation text dynamically if present
+  const relaxationMatch = cleanText.match(/(?:age\s*relaxation|relaxation\s*of\s*upper\s*age|upper\s*age\s*limit\s*shall\s*be\s*relaxed)[^.]*\./i);
+  const relaxations = relaxationMatch ? relaxationMatch[0] : "OBC: 3 Yrs, SC/ST: 5 Yrs, PwD: 10 Yrs";
+
+  return { minAge, maxAge, relaxations };
+};
+
+const parseExamDate = (text: string): string => {
+  if (!text || typeof text !== "string") return "To be announced";
+  const cleanText = text.replace(/\s+/g, " ");
+
+  const keywordMatch = cleanText.match(
+    /(?:exam(?:ination)?\s*date|held\s*on|tentative\s*date|preliminary\s*exam(?:ination)?|online\s*exam)[^0-9]*(?:[:\s-]*)(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{1,2}(?:st|nd|rd|th)?\s+[a-zA-Z]+\s+\d{4}|[a-zA-Z]+\s+\d{4})/i
+  );
+
+  if (keywordMatch && keywordMatch[1]) {
+    const rawDate = keywordMatch[1].trim();
+    const parsed = Date.parse(rawDate);
+    if (!isNaN(parsed)) {
+      return new Date(parsed).toISOString().split('T')[0];
     }
+    return rawDate; 
+  }
 
-    const relaxationMatch = cleanText.match(/(?:age\s*relaxation|relaxation\s*of\s*upper\s*age)[^.]*\./i);
-    const relaxations = relaxationMatch ? relaxationMatch[0] : "OBC: 3 Yrs, SC/ST: 5 Yrs";
+  // 2. Fallback: Search for general calendar date formats near exam context
+  const generalDateMatch = cleanText.match(/\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/);
+  if (generalDateMatch && generalDateMatch[1]) {
+    const parsed = Date.parse(generalDateMatch[1].replace(/\./g, '-').replace(/\//g, '-'));
+    if (!isNaN(parsed)) {
+      return new Date(parsed).toISOString().split('T')[0];
+    }
+  }
 
-    return { minAge, maxAge, relaxations };
-  };
+  // 3. Fallback: Look for Month & Year patterns common in IBPS calendars (e.g., "August/September 2026")
+  const monthYearMatch = cleanText.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s*(?:to|-)?\s*(?:January|February|March|April|May|June|July|August|September|October|November|December)?\s*\d{4}/i);
+  if (monthYearMatch) {
+    return monthYearMatch[0];
+  }
+  return "To be announced";
+};
 
   const extractEligibility = (text: string): { overview: string; qualification?: string } => {
-    if (!text) return { overview: "" };
+  if (!text || typeof text !== "string") return { overview: "" };
 
-    const cleanedText = text.replace(/\s+/g, " ");
-    const sentences = cleanedText.split(/(?<=[.?!])\s+/);
+  const cleanedText = text.replace(/\s+/g, " ");
+  
+  // Improved sentence split that avoids breaking on common abbreviations like B.A., M.Sc., No., etc.
+  const sentences = cleanedText.split(/(?<!\b[A-Z])(?<=[.?!])\s+/);
+  
+  const educationKeywords = [
+    "degree", "graduation", "graduate", "post graduate", "post-graduate",
+    "ug", "pg", "bachelor", "master", "discipline", "qualification", "eligibility"
+  ];
+
+  const matchedSentences: string[] = [];
+  let detectedQualification = "Graduate Degree in any discipline";
+
+  for (const sentence of sentences) {
+    const lower = sentence.toLowerCase();
+    const isEduRelevant = educationKeywords.some((keyword) => lower.includes(keyword));
     
-    const educationKeywords = [
-      "degree", "graduation", "graduate", "post graduate", "post-graduate",
-      "ug", "pg", "bachelor", "master", "discipline", "qualification"
-    ];
-
-    const matchedSentences: string[] = [];
-    let detectedQualification = "Graduate Degree in any discipline";
-
-    for (const sentence of sentences) {
-      const lower = sentence.toLowerCase();
-      const isEduRelevant = educationKeywords.some((keyword) => lower.includes(keyword));
+    if (isEduRelevant && sentence.length > 15) {
+      matchedSentences.push(sentence.trim());
       
-      if (isEduRelevant && sentence.length > 15) {
-        matchedSentences.push(sentence.trim());
-        
-        if (/post\s*graduate|pg|master/i.test(lower)) {
-          detectedQualification = "Postgraduate (PG) / Master's Degree";
-        } else if (/under\s*graduate|ug|bachelor|graduat(e|ion)|degree/i.test(lower)) {
-          detectedQualification = "Undergraduate (UG) / Bachelor's Degree";
-        }
+      // Check for Postgraduate first so it doesn't get overridden by general 'graduate' matches
+      if (/post\s*graduate|pg|master|doctorate|ph\.?d/i.test(lower)) {
+        detectedQualification = "Postgraduate (PG) / Master's Degree";
+      } else if (/under\s*graduate|ug|bachelor|graduat(e|ion)|degree/i.test(lower)) {
+        detectedQualification = "Undergraduate (UG) / Bachelor's Degree";
       }
     }
+  }
 
-    const overview = matchedSentences.length > 0 
-      ? matchedSentences.slice(0, 3).join(" ") 
-      : cleanedText.slice(0, 300);
+  const overview = matchedSentences.length > 0 
+    ? matchedSentences.slice(0, 3).join(" ") 
+    : cleanedText.slice(0, 300);
 
-    return {
-      overview: cleanOverviewText(overview),
-      qualification: detectedQualification,
-    };
+  return {
+    overview: typeof cleanOverviewText === "function" ? cleanOverviewText(overview) : overview,
+    qualification: detectedQualification,
   };
+};
 
   const results = new Map<string, any>();
 
@@ -861,7 +911,7 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
 
         const pdfBuffer = await fs.readFile(absolutePath);
         const parsed = await pdfParse(pdfBuffer);
-        const pdfText = parsed.text ?? "";
+        const pdfText = parsed.text ?? "";    
         
         aggregatedText += " " + pdfText;
 
@@ -874,6 +924,7 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
 
         vacancyData = parseVacanciesData(aggregatedText);
         feeData = parseCategoryFees(aggregatedText);
+        let extractedExamDate = parseExamDate(aggregatedText);
 
         const finalEligibility = pdfEligibility.overview ? pdfEligibility : eligibilityResult;
 
@@ -916,7 +967,7 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
           importantDates: {
             applyStart: extractedFields.dates?.applicationStartDate ? new Date(extractedFields.dates.applicationStartDate).toISOString().split('T')[0] : undefined,
             applyEnd: applyEndStr,
-            examDate: extractedFields.dates?.examDateStart ? new Date(extractedFields.dates.examDateStart).toISOString().split('T')[0] : "To be announced",
+            examDate: extractedExamDate,
             admitCardDate: admitCardUrl || "4 Days before Exam",
             resultDate: "To be announced"
           }

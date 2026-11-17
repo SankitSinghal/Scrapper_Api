@@ -64,16 +64,24 @@ export const getAllExams = async (
 
     const filter: any = {
    
-      jobTitle: { $exists: true, $ne: null },
+      title: { $exists: true, $ne: null },
       "links.sourceUrl": { $not: /policies-rules-guidelines|overviewofibps/i }
     };
 
     if (req.query.qualification) {
-      filter["eligibility.qualification"] = new RegExp(String(req.query.qualification), "i");
+      filter["qualification"] = new RegExp(String(req.query.qualification), "i");
+    }
+
+    if (req.query.category) {
+      filter["category"] = new RegExp(String(req.query.category), "i");
+    }
+
+    if (req.query.status) {
+      filter["status"] = String(req.query.status);
     }
 
     if (req.query.search) {
-      filter.jobTitle = { $regex: String(req.query.search), $options: "i" };
+      filter.title = { $regex: String(req.query.search), $options: "i" };
     }
 
     const [exams, total] = await Promise.all([

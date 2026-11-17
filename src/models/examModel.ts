@@ -15,18 +15,18 @@ export interface IExam extends Document {
   category?: string;
   salaryMin?: string;
   salaryMax?: string;
-  tags?: string[];
+  tags?: string;
   status?: 'apply' | 'upcoming' | 'admit' | 'result' | 'closed';
   featured?: boolean;
-  
+  examDate?: string;
   fees: IFees;
   ageLimit: IAgeLimit;
   links: ILinks;
   importantDates?: IImportantDates;
   recruitmentId: string;
 
-  isLiveOnWeb?: boolean;
-  isLiveOnApp?: boolean;
+  // isLiveOnWeb?: boolean;
+  // isLiveOnApp?: boolean;
 }
 
 const examSchema = new Schema<IExam>(
@@ -47,7 +47,7 @@ const examSchema = new Schema<IExam>(
     category: { type: String, default: "Recruitment", trim: true },
     salaryMin: { type: String, default: "21700", trim: true },
     salaryMax: { type: String, default: "69100", trim: true },
-    tags: [{ type: String, trim: true }],
+    tags: { type: String, trim: true },
     status: { 
       type: String, 
       enum: ['apply', 'upcoming', 'admit', 'result', 'closed'], 
@@ -62,8 +62,8 @@ const examSchema = new Schema<IExam>(
     links: { type: linksSchema, required: true },
     importantDates: { type: importantDatesSchema },
     recruitmentId: { type: String, required: true, unique: true, index: true },
-    isLiveOnWeb: { type: Boolean, default: true },
-    isLiveOnApp: { type: Boolean, default: true },
+    // isLiveOnWeb: { type: Boolean, default: true },
+    // isLiveOnApp: { type: Boolean, default: true },
   },
   {
     timestamps: true,

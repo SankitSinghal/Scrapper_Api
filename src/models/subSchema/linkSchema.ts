@@ -7,6 +7,7 @@ export interface ILinks {
   officialNotificationUrl?: string;
   sourceUrl?: string;
   advertisementFilePath?: string;
+  admitCardUrl?: string;
 }
 
 const linksSchema = new Schema<ILinks>(
@@ -17,6 +18,7 @@ const linksSchema = new Schema<ILinks>(
     officialNotificationUrl: { type: String, trim: true }, 
     sourceUrl: { type: String, trim: true },
     advertisementFilePath: { type: String, trim: true },
+    admitCardUrl: { type: String, trim: true },
   },
   { _id: false }
 );

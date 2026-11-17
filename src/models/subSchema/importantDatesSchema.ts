@@ -8,7 +8,7 @@ export interface IImportantDates {
   examDate?: string;
   admitCardDate?: string;
   resultDate?: string;
-}
+}                                        
 
 const importantDatesSchema = new Schema<IImportantDates>(
   {
@@ -24,3 +24,4 @@ const importantDatesSchema = new Schema<IImportantDates>(
 );
 
 export default importantDatesSchema;
+
