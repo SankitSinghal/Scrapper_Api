@@ -8,6 +8,8 @@ import crypto from "node:crypto";
 import Exam from "../models/examModel";
 import env from "../config/env";
 import { CategoryFeeResult, ScraperResult, VacancyResult } from "../Types/scraperServiceType";
+import { normalizeScrapedText, extractSectionWindow } from "../utils/textNormalizer";
+import { sanitizeUrl } from "../utils/textNormalizer";
 
 const IBPS_UPDATES_URL = "https://www.ibps.in/index.php/crp-updates/";
 
@@ -418,8 +420,6 @@ const getAdmitCardUrl = (
     );
 
     if (!/admit\s*card|call\s*letter|hall\s*ticket|download.*call/i.test(surroundingText)) {
-      console.log("🔍 Found potential admit card text:", surroundingText); // 💡 DEBUG LOG
-      console.log("🔍 Found href:", href);
       return;
     }
 
@@ -430,7 +430,7 @@ const getAdmitCardUrl = (
 
       if (isAllowedHttpsUrl(url.href)) {
         result = url.href;
-        console.log("✅ Valid Admit Card URL extracted:", result);
+        // console.log("Valid Admit Card URL extracted:", result);
       }
     } catch {
       // Ignore malformed URLs.
@@ -448,6 +448,759 @@ const getAdmitCardUrl = (
 
   return result;
 };
+
+// export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
+
+//   if (!isAllowedHttpsUrl(IBPS_UPDATES_URL)) {
+//     throw new Error("IBPS updates URL is not allowlisted");
+//   }
+
+//   const html = await fetchText(IBPS_UPDATES_URL);
+//   const $ = cheerio.load(html);
+
+//   $("script, style, noscript, svg").remove();
+
+//   const candidatesMap = new Map<
+//     string,
+//     { title: string; sourceUrl: string; advertisementUrl?: string }
+//   >();
+
+//   const addCandidate = (
+//     title: string,
+//     sourceUrl: string,
+//     advertisementUrl?: string,
+//   ) => {
+//     const lowerTitle = title.toLowerCase();
+//     if (
+//       sourceUrl.includes('/services') || 
+//       sourceUrl.includes('/gallery') || 
+//       sourceUrl.includes('/contact-us') ||
+//       sourceUrl.includes('/about-us') ||
+//       sourceUrl.includes('/chairmen') ||
+//       sourceUrl.includes('/founders') ||
+//       sourceUrl.includes('/governingboard') ||
+//       sourceUrl.includes('/directorsmessage') ||
+//       sourceUrl.includes('/ourhighlights') ||
+//       sourceUrl.includes('/organisational-') ||
+//       lowerTitle.includes('organisational') ||
+//       lowerTitle.includes('governing board') ||
+//       lowerTitle.includes('founders') ||
+//       lowerTitle.includes('director')
+//     ) {
+//       return;
+//     }
+
+//     if (!isUsefulTitle(title, sourceUrl)) return;
+//     const existing = candidatesMap.get(sourceUrl);
+//     if (existing) {
+//       if (!existing.advertisementUrl && advertisementUrl) {
+//         existing.advertisementUrl = advertisementUrl;
+//       }
+//     } else {
+//       candidatesMap.set(sourceUrl, { title, sourceUrl, advertisementUrl });
+//     }
+//   };
+
+//   $("tr").each((_index, element) => {
+//     const row = $(element);
+//     const links = row.find("a[href]");
+//     const rowPdfLinks: Array<{ url: string; label: string; title: string }> = [];
+//     const rowCandidates: Array<{ title: string; sourceUrl: string }> = [];
+
+//     links.each((_linkIndex, link) => {
+//       const anchor = $(link);
+//       const label = cleanText(anchor.text());
+//       const href = anchor.attr("href");
+
+//       if (!href) return;
+
+//       try {
+//         const url = new URL(href, IBPS_UPDATES_URL);
+//         if (!isAllowedHttpsUrl(url.href)) return;
+
+//         if (isPdfUrl(url.href)) {
+//           const title = cleanText(anchor.text() || anchor.attr("title") || "");
+//           rowPdfLinks.push({
+//             url: url.href,
+//             label: cleanText(`${title} ${href}`),
+//             title,
+//           });
+//           return;
+//         }
+
+//         if (isUsefulTitle(label)) {
+//           rowCandidates.push({ title: label, sourceUrl: url.href });
+//         }
+//       } catch {
+//         // Ignore malformed URLs.
+//       }
+//     });
+
+//     if (rowCandidates.length > 0) {
+//       const advertisementPdf =
+//         rowPdfLinks.find(({ label }) =>
+//           /advertisement|notification|detailed|advt|crp|recruitment|vacancy|information handout/i.test(
+//             label,
+//           ),
+//         ) ?? rowPdfLinks[0];
+
+//       for (const candidate of rowCandidates) {
+//         addCandidate(
+//           candidate.title,
+//           candidate.sourceUrl,
+//           advertisementPdf?.url,
+//         );
+//       }
+//     } else {
+//       for (const pdfLink of rowPdfLinks) {
+//         if (!isUsefulTitle(pdfLink.title)) continue;
+//         addCandidate(pdfLink.title, pdfLink.url, pdfLink.url);
+//       }
+//     }
+//   });
+
+//   if (candidatesMap.size === 0) {
+//     $("a[href]").each((_index, element) => {
+//       const anchor = $(element);
+//       const title = cleanText(anchor.text());
+//       const href = anchor.attr("href");
+
+//       if (!href) return;
+
+//       try {
+//         const url = new URL(href, IBPS_UPDATES_URL);
+//         if (!isAllowedHttpsUrl(url.href)) return;
+
+//         if (isUsefulTitle(title, url.href)) {
+//           if (isPdfUrl(url.href)) {
+//             addCandidate(title, url.href, url.href);
+//           } else {
+//             addCandidate(title, url.href);
+//           }
+//         }
+//       } catch {
+//         // Ignore malformed URLs.
+//       }
+//     });
+//   }
+
+//   const cleanOverviewText = (text: string): string => {
+//     if (!text) return "";
+//     return text
+//       .replace(/^[\s\-–—_]+/, "") 
+//       .replace(/[\s\-–—_]+$/, "") 
+//       .replace(/[-–—]{3,}/g, " ") 
+//       .replace(/\s+/g, " ")      
+//       .trim();
+//   };
+
+//   const parseVacanciesData = (text: string): VacancyResult => {
+//     if (!text || typeof text !== "string") return { total: 0 };
+
+//     const cleanText = text.replace(/\s+/g, " ");
+//     let total = 0;
+
+//     const patterns = [
+//       /(?:total\s*(?:posts|vacancies|seats|number)?|number\s*of\s*vacancies|vacancies|posts)\s*(?:is|are|[:\s-])*\s*([\d,]{1,6})/i,
+//       /(\d{1,6})\s*(?:posts|vacancies|seats)\s*(?:are\s*available|total)?/i
+//     ];
+
+//     for (const pattern of patterns) {
+//       const match = cleanText.match(pattern);
+//       if (match && match[1]) {
+//         const parsed = parseInt(match[1].replace(/,/g, ""), 10);
+//         if (!isNaN(parsed) && parsed > 0) {
+//           total = parsed;
+//           break;
+//         }
+//       }
+//     }
+
+//     return { total };
+//   };
+
+//   const parseCategoryFees = (text: string): CategoryFeeResult => {
+//     const defaultFees = { general: 0, obc: 0, sc: 0, st: 0, ews: 0, pwd: 0, female: 0 };
+    
+//     if (!text || typeof text !== "string") {
+//       return { applicationFee: 0, categoryWiseFee: defaultFees };
+//     }
+
+//     const cleanText = text.replace(/\s+/g, " ");
+//     let defaultFee = 0;
+
+//     const extractFeeFromSnippet = (snippet: string): number => {
+//       const match = snippet.match(/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{2})?)/i) || snippet.match(/\b([1-9]\d{2,4})\/-\b/);
+//       if (match && match[1]) {
+//         const parsed = parseInt(match[1].replace(/,/g, ""), 10);
+//         if (!isNaN(parsed) && parsed > 0) return parsed;
+//       }
+//       return 0;
+//     };
+
+//     const groupPatterns = [
+//       { 
+//         regex: /(?:sc\s*\/?\s*st\s*\/?\s*(?:pwd|pwbd))\s*[^\\d]{0,30}((?:rs\.?|inr|₹)?\s*[\d,]+(?:\/)?)/i, 
+//         targets: ['sc', 'st', 'pwd'] 
+//       },
+//       { 
+//         regex: /(?:general\s*\/?\s*obc\s*\/?\s*ews|all\s*other\s*categories?|other\s*than\s*sc)\s*[^\\d]{0,30}((?:rs\.?|inr|₹)?\s*[\d,]+(?:\/)?)/i, 
+//         targets: ['general', 'obc', 'ews'] 
+//       },
+//       { 
+//         regex: /(?:for\s*all\s*other)\s*[^\\d]{0,30}((?:rs\.?|inr|₹)?\s*[\d,]+(?:\/)?)/i, 
+//         targets: ['general', 'obc', 'ews'] 
+//       }
+//     ];
+
+//     const fees = { ...defaultFees };
+//     for (const group of groupPatterns) {
+//       const match = cleanText.match(group.regex);
+//       if (match && match[1]) {
+//         const feeVal = extractFeeFromSnippet(match[1]);
+//         if (feeVal > 0) {
+//           for (const target of group.targets) {
+//             fees[target as keyof typeof fees] = feeVal;
+//           }
+//         }
+//       }
+//     }
+
+//     const extractFeeFor = (keywords: string[]): number => {
+//       for (const kw of keywords) {
+//         const zeroRegex = new RegExp(`\\b${kw}\\b[^\\w]{0,30}\\b(nil|no\\s*fee|exempted|free|\\b0\\b)\\b`, "i");
+//         if (zeroRegex.test(cleanText)) return 0;
+
+//         const fwdRegex = new RegExp(`\\b${kw}\\b[^\\d]{0,35}(?:rs\\.?|inr|₹)?\\s*([\\d,]{2,5})`, "i");
+//         const fwdMatch = cleanText.match(fwdRegex);
+//         if (fwdMatch && fwdMatch[1]) {
+//           const parsed = parseInt(fwdMatch[1].replace(/,/g, ""), 10);
+//           if (!isNaN(parsed)) return parsed;
+//         }
+
+//         const bwdRegex = new RegExp(`(?:rs\\.?|inr|₹)?\\s*([\\d,]{2,5})[^\\d]{0,35}\\b${kw}\\b`, "i");
+//         const bwdMatch = cleanText.match(bwdRegex);
+//         if (bwdMatch && bwdMatch[1]) {
+//           const parsed = parseInt(bwdMatch[1].replace(/,/g, ""), 10);
+//           if (!isNaN(parsed)) return parsed;
+//         }
+//       }
+//       return 0;
+//     };
+
+//     if (fees.general === 0) fees.general = extractFeeFor(["general", "ur", "unreserved", "all other"]);
+//     if (fees.obc === 0) fees.obc = extractFeeFor(["obc", "other backward class", "bc"]);
+//     if (fees.ews === 0) fees.ews = extractFeeFor(["ews", "economically weaker"]);
+//     if (fees.sc === 0) fees.sc = extractFeeFor(["sc", "scheduled caste"]);
+//     if (fees.st === 0) fees.st = extractFeeFor(["st", "scheduled tribe"]);
+//     if (fees.pwd === 0) fees.pwd = extractFeeFor(["pwd", "pwbd", "handicapped", "benchmark disabilities"]);
+//     if (fees.female === 0) fees.female = extractFeeFor(["female", "women"]);
+
+//     const generalFeeMatch = cleanText.match(/(?:application fee|fee payable|examination fee|charges)[:\s-]*(?:rs\.?|inr|₹)?\s*([\\d,]{2,5})/i);
+//     if (generalFeeMatch && generalFeeMatch[1]) {
+//       defaultFee = parseInt(generalFeeMatch[1].replace(/,/g, ""), 10) || 0;
+//     }
+
+//     if (fees.general === 0) fees.general = defaultFee;
+//     if (fees.obc === 0) fees.obc = fees.general;
+//     if (fees.ews === 0) fees.ews = fees.general;
+
+//     const finalAppFee = defaultFee || fees.general;
+
+//     return {
+//       applicationFee: finalAppFee,
+//       categoryWiseFee: fees,
+//     };
+//   };
+
+//   const parseAgeLimitData = (text: string): { minAge: string; maxAge: string; relaxations?: string } => {
+//   const defaultAge = { minAge: "20", maxAge: "30", relaxations: "OBC: 3 Yrs, SC/ST: 5 Yrs" };
+//   if (!text || typeof text !== "string") return defaultAge;
+
+//   const cleanText = text.replace(/\s+/g, " ");
+//   let minAge = "";
+//   let maxAge = "";
+
+//   // 1. Try to catch direct ranges first (e.g., "20 to 30 years", "21-30 years", "Between 20 and 30 years")
+//   const rangeMatch = cleanText.match(/(?:between\s*)?(\d{2})\s*(?:to|and|[-–])\s*(\d{2})\s*years?/i);
+//   if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
+//     minAge = rangeMatch[1];
+//     maxAge = rangeMatch[2];
+//   }
+
+//   // 2. If no range found, search for specific minimum age phrases
+//   if (!minAge) {
+//     const minMatch = cleanText.match(/(?:minimum\s*age|min\.?\s*age|not\s*less\s*than|not\s*below|above)\s*[:\s-]*(\d{1,2})\s*years?/i);
+//     if (minMatch && minMatch[1]) {
+//       minAge = minMatch[1];
+//     }
+//   }
+
+//   // 3. If no max found, search for specific maximum age phrases
+//   if (!maxAge) {
+//     const maxMatch = cleanText.match(/(?:maximum\s*age|max\.?\s*age|not\s*more\s*than|not\s*above|below|up\s*to)\s*[:\s-]*(\d{1,2})\s*years?/i);
+//     if (maxMatch && maxMatch[1]) {
+//       maxAge = maxMatch[1];
+//     }
+//   }
+
+//   // 4. Final fallback defaults if nothing matched
+//   if (!minAge) minAge = "20";
+//   if (!maxAge) maxAge = "30";
+
+//   // Extract relaxation text dynamically if present
+//   const relaxationMatch = cleanText.match(/(?:age\s*relaxation|relaxation\s*of\s*upper\s*age|upper\s*age\s*limit\s*shall\s*be\s*relaxed)[^.]*\./i);
+//   const relaxations = relaxationMatch ? relaxationMatch[0] : "OBC: 3 Yrs, SC/ST: 5 Yrs, PwD: 10 Yrs";
+
+//   return { minAge, maxAge, relaxations };
+// };
+
+// const parseExamDate = (text: string): string => {
+//   if (!text || typeof text !== "string") return "To be announced";
+//   const cleanText = text.replace(/\s+/g, " ");
+
+//   const keywordMatch = cleanText.match(
+//     /(?:exam(?:ination)?\s*date|held\s*on|tentative\s*date|preliminary\s*exam(?:ination)?|online\s*exam)[^0-9]*(?:[:\s-]*)(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{1,2}(?:st|nd|rd|th)?\s+[a-zA-Z]+\s+\d{4}|[a-zA-Z]+\s+\d{4})/i
+//   );
+
+//   if (keywordMatch && keywordMatch[1]) {
+//     const rawDate = keywordMatch[1].trim();
+//     const parsed = Date.parse(rawDate);
+//     if (!isNaN(parsed)) {
+//       return new Date(parsed).toISOString().split('T')[0];
+//     }
+//     return rawDate; 
+//   }
+
+//   // 2. Fallback: Search for general calendar date formats near exam context
+//   const generalDateMatch = cleanText.match(/\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/);
+//   if (generalDateMatch && generalDateMatch[1]) {
+//     const parsed = Date.parse(generalDateMatch[1].replace(/\./g, '-').replace(/\//g, '-'));
+//     if (!isNaN(parsed)) {
+//       return new Date(parsed).toISOString().split('T')[0];
+//     }
+//   }
+
+//   // 3. Fallback: Look for Month & Year patterns common in IBPS calendars (e.g., "August/September 2026")
+//   const monthYearMatch = cleanText.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s*(?:to|-)?\s*(?:January|February|March|April|May|June|July|August|September|October|November|December)?\s*\d{4}/i);
+//   if (monthYearMatch) {
+//     return monthYearMatch[0];
+//   }
+//   return "To be announced";
+// };
+
+//   const extractEligibility = (text: string): { overview: string; qualification?: string } => {
+//   if (!text || typeof text !== "string") return { overview: "" };
+
+//   const cleanedText = text.replace(/\s+/g, " ");
+  
+//   // Improved sentence split that avoids breaking on common abbreviations like B.A., M.Sc., No., etc.
+//   const sentences = cleanedText.split(/(?<!\b[A-Z])(?<=[.?!])\s+/);
+  
+//   const educationKeywords = [
+//     "degree", "graduation", "graduate", "post graduate", "post-graduate",
+//     "ug", "pg", "bachelor", "master", "discipline", "qualification", "eligibility"
+//   ];
+
+//   const matchedSentences: string[] = [];
+//   let detectedQualification = "Graduate Degree in any discipline";
+
+//   for (const sentence of sentences) {
+//     const lower = sentence.toLowerCase();
+//     const isEduRelevant = educationKeywords.some((keyword) => lower.includes(keyword));
+    
+//     if (isEduRelevant && sentence.length > 15) {
+//       matchedSentences.push(sentence.trim());
+      
+//       // Check for Postgraduate first so it doesn't get overridden by general 'graduate' matches
+//       if (/post\s*graduate|pg|master|doctorate|ph\.?d/i.test(lower)) {
+//         detectedQualification = "Postgraduate (PG) / Master's Degree";
+//       } else if (/under\s*graduate|ug|bachelor|graduat(e|ion)|degree/i.test(lower)) {
+//         detectedQualification = "Undergraduate (UG) / Bachelor's Degree";
+//       }
+//     }
+//   }
+
+//   const overview = matchedSentences.length > 0 
+//     ? matchedSentences.slice(0, 3).join(" ") 
+//     : cleanedText.slice(0, 300);
+
+//   return {
+//     overview: typeof cleanOverviewText === "function" ? cleanOverviewText(overview) : overview,
+//     qualification: detectedQualification,
+//   };
+// };
+
+//   //Link Resolution helper 
+//   const isLikelyPdf = (url?: string): boolean => {
+//   if (!url) return false;
+//   return isPdfUrl(url) || /\.pdf($|\?)/i.test(url);
+// };
+
+// const extractApplyOnlineFromPage = (
+//   detailPage: cheerio.CheerioAPI,
+//   baseUrl: string
+// ): string | undefined => {
+//   let foundApplyUrl: string | undefined;
+
+//   detailPage("a[href]").each((_idx, el) => {
+//     if (foundApplyUrl) return;
+//     const anchor = detailPage(el);
+//     const href = anchor.attr("href");
+//     const text = cleanText(`${anchor.text()} ${anchor.attr("title") || ""} ${href || ""}`);
+
+//     if (!href || !/apply\s*online|online\s*application|click\s*here\s*to\s*apply/i.test(text)) {
+//       return;
+//     }
+
+//     const sanitized = sanitizeUrl(href, baseUrl);
+//     if (sanitized && isAllowedHttpsUrl(sanitized) && !isLikelyPdf(sanitized)) {
+//       foundApplyUrl = sanitized;
+//     }
+//   });
+
+//   return foundApplyUrl;
+// };
+
+// const buildExamLinks = (params: {
+//   sourceUrl: string;
+//   advertisementUrl?: string;
+//   admitCardUrl?: string;
+//   applyPageUrl?: string;
+// }) => {
+//   const cleanSource =
+//     sanitizeUrl(params.sourceUrl, IBPS_UPDATES_URL) ?? IBPS_UPDATES_URL;
+//   const sourceIsPdf = isLikelyPdf(cleanSource);
+
+//   const rawPdf =
+//     params.advertisementUrl || (sourceIsPdf ? cleanSource : undefined);
+//   const cleanPdf = sanitizeUrl(rawPdf, IBPS_UPDATES_URL) ?? "";
+
+//   const cleanApplyCandidate = sanitizeUrl(params.applyPageUrl, IBPS_UPDATES_URL);
+//   const cleanApplyOnline =
+//     cleanApplyCandidate && !isLikelyPdf(cleanApplyCandidate)
+//       ? cleanApplyCandidate
+//       : !sourceIsPdf
+//         ? cleanSource
+//         : "https://www.ibps.in";
+
+//   const cleanAdmitCard = sanitizeUrl(params.admitCardUrl, IBPS_UPDATES_URL);
+
+//   return {
+//     applyOnline: cleanApplyOnline,
+//     notificationPdf: cleanPdf,
+//     officialWebsite: "https://www.ibps.in",
+//     sourceUrl: cleanSource,
+//     ...(cleanAdmitCard ? { admitCardUrl: cleanAdmitCard } : {}),
+//   };
+// };
+
+//   const results = new Map<string, any>();
+
+//   for (const candidate of candidatesMap.values()) {
+//     let detailHtml = "";
+//     let aggregatedText = "";
+
+//     if (!isPdfUrl(candidate.sourceUrl)) {
+//       try {
+//         detailHtml = await fetchText(candidate.sourceUrl);
+//       } catch {
+//         const recruitmentId = crypto
+//           .createHash("sha256")
+//           .update(candidate.sourceUrl)
+//           .digest("hex");
+          
+//         results.set(candidate.sourceUrl, {
+//           recruitmentId,
+//           title: candidate.title,
+//           org: "Institute of Banking Personnel Selection (IBPS)",
+//           sector: "BANKING",
+//           posts: "Not Announced",
+//           qualification: "Graduate Degree in any discipline",
+//           lastDate: "2026-12-31",
+//           fees: {
+//             generalObc: "850",
+//             scStPwdFemale: "175"
+//           },
+//           ageLimit: {
+//             minAge: "20",                                                            
+//             maxAge: "30",
+//             cutoffDate: "As per official notification",
+//             relaxations: "OBC: 3 Yrs, SC/ST: 5 Yrs"
+//           },
+//           links: {
+//             applyOnline: candidate.sourceUrl,
+//             officialWebsite: "https://www.ibps.in",
+//             sourceUrl: candidate.sourceUrl,
+//           },
+//         });
+//         continue;
+//       }
+//     }
+
+//     const detailPage = cheerio.load(detailHtml);
+//     detailPage("script, style, noscript, svg").remove();
+
+//     const detailText = getDocumentText(detailPage);
+//     aggregatedText = normalizeScrapedText(`${aggregatedText} ${detailText}`);
+
+//     const pdfLinks = getPdfLinks(detailPage, candidate.sourceUrl);
+//     // const admitCardUrl = getAdmitCardUrl(detailPage, candidate.sourceUrl, pdfLinks);
+//     const admitCardUrl = detailHtml
+//   ? extractApplyOnlineFromPage(detailPage, candidate.sourceUrl)
+//   : undefined;
+    
+//     const extractedFields = extractExamFields(aggregatedText);
+//     const eligibilityResult = extractEligibility(aggregatedText);
+    
+//     // let vacancyData = parseVacanciesData(aggregatedText);
+//     // let feeData = parseCategoryFees(aggregatedText);
+//     // let ageData = parseAgeLimitData(aggregatedText);
+   
+//     let vacancyData = parseVacanciesData(
+//       extractSectionWindow(aggregatedText, /vacancy|vacancies|post|posts/i, 600)
+//     );
+//     let feeData = parseCategoryFees(
+//       extractSectionWindow(aggregatedText, /application\s*fee|intimation\s*charges|fee\s*payable/i, 600)
+//     );
+//     let ageData = parseAgeLimitData(
+//       extractSectionWindow(aggregatedText, /age\s*limit|upper\s*age|eligibility\s*criteria/i, 600)
+//     );
+
+//     let advertisementPdf = candidate.advertisementUrl
+//       ? { url: candidate.advertisementUrl, label: "advertisement" }
+//       : pdfLinks.find(({ url, label }) =>
+//           /advertisement|notification|detailed|advt|crp|recruitment|information\s*handout/i.test(
+//             `${label} ${url}`,
+//           ),
+//         );
+
+//     if (!advertisementPdf && pdfLinks.length > 0) {
+//       advertisementPdf = pdfLinks[0];
+//     }
+
+//     if (advertisementPdf) {
+//       const advertisementUrl = advertisementPdf.url;
+//       const filename = `${crypto.createHash("sha256").update(advertisementUrl).digest("hex")}.pdf`;
+//       const absolutePath = path.join(UPLOAD_DIR, filename);
+
+//       try {
+//         await downloadPdf(advertisementUrl, absolutePath);
+
+//         const pdfBuffer = await fs.readFile(absolutePath);
+//         const parsed = await pdfParse(pdfBuffer);
+//         const pdfText = normalizeScrapedText(parsed.text ?? "");   
+        
+//         aggregatedText = normalizeScrapedText(`${aggregatedText} ${pdfText}`);
+
+//         const pdfFields = extractExamFields(pdfText);
+//         const pdfEligibility = 
+//         typeof pdfFields.eligibility?.overview === "string" &&
+//         pdfFields.eligibility.overview.trim().length >= 20
+//           ? { overview: pdfFields.eligibility.overview.trim(), qualification: "Graduate Degree in any discipline" }
+//           : extractEligibility(pdfText);
+
+//         // vacancyData = parseVacanciesData(aggregatedText);
+//         // feeData = parseCategoryFees(aggregatedText);
+//         // let extractedExamDate = parseExamDate(aggregatedText);
+
+//         vacancyData = parseVacanciesData(
+//           extractSectionWindow(aggregatedText, /vacancy|vacancies|post|posts/i, 600)
+//         );
+//         feeData = parseCategoryFees(
+//           extractSectionWindow(aggregatedText, /application\s*fee|intimation\s*charges|fee\s*payable/i, 600)
+//         );
+//         ageData = parseAgeLimitData(
+//           extractSectionWindow(aggregatedText, /age\s*limit|upper\s*age|eligibility\s*criteria/i, 600)
+//         );
+//         const extractedExamDate = parseExamDate(
+//           extractSectionWindow(aggregatedText, /schedule|examination|preliminary|main\s*exam|call\s*letter/i, 600)
+//         );
+
+//         const finalEligibility = pdfEligibility.overview ? pdfEligibility : eligibilityResult;
+
+//         const applyEndStr = extractedFields.dates?.applicationEndDate 
+//           ? new Date(extractedFields.dates.applicationEndDate).toISOString().split('T')[0]
+//           : "2026-12-31";
+
+//           const cleanApplyOnline = sanitizeUrl(candidate.sourceUrl, IBPS_UPDATES_URL);
+//           const cleanNotificationPdf = sanitizeUrl(advertisementUrl, IBPS_UPDATES_URL);
+//           const cleanAdmitCardUrl = sanitizeUrl(admitCardUrl, IBPS_UPDATES_URL);
+
+//         const exam: any = {
+//           recruitmentId: crypto
+//             .createHash("sha256")
+//             .update(candidate.sourceUrl)
+//             .digest("hex"),
+//           title: candidate.title,
+//           org: "Institute of Banking Personnel Selection (IBPS)",
+//           sector: "BANKING",
+//           posts: vacancyData.total > 0 ? String(vacancyData.total) : "Not Announced",
+//           qualification: finalEligibility.qualification || "Graduate Degree in any discipline",
+//           lastDate: applyEndStr,
+//           location: "All India",
+//           category: "Banking",
+//           status: "apply",
+//           featured: false,
+//           fees: {
+//             generalObc: String(feeData.categoryWiseFee.general || 850),
+//             scStPwdFemale: String(feeData.categoryWiseFee.sc || 175),
+//             paymentMode: "Online (UPI, Net Banking, Debit/Credit Card)"
+//           },
+//           ageLimit: {
+//           minAge: ageData.minAge,
+//           maxAge: ageData.maxAge,
+//           cutoffDate: "As per official notification",
+//           relaxations: ageData.relaxations
+//         },
+//           links: {
+//             applyOnline: cleanApplyOnline ?? candidate.sourceUrl,
+//             notificationPdf: cleanNotificationPdf ?? "",
+//             officialWebsite: "https://www.ibps.in",
+//             sourceUrl: cleanApplyOnline ?? candidate.sourceUrl,
+//             ...(cleanAdmitCardUrl ? { admitCardUrl: cleanAdmitCardUrl } : {}),
+//         },
+//           importantDates: {
+//             applyStart: extractedFields.dates?.applicationStartDate ? new Date(extractedFields.dates.applicationStartDate).toISOString().split('T')[0] : undefined,
+//             applyEnd: applyEndStr,
+//             examDate: extractedExamDate,
+//             admitCardDate: admitCardUrl || "4 Days before Exam",
+//             resultDate: "To be announced"
+//           }
+//         };
+
+//         results.set(candidate.sourceUrl, exam);
+//         continue;
+//       } catch (error) {
+//         console.error(`PDF processing failed for ${candidate.title}:`, error);
+//       }
+//     }
+
+//     const applyEndFallback = extractedFields.dates?.applicationEndDate 
+//       ? new Date(extractedFields.dates.applicationEndDate).toISOString().split('T')[0]
+//       : "2026-12-31";
+
+//     const exam: any = {
+//       recruitmentId: crypto
+//         .createHash("sha256")
+//         .update(candidate.sourceUrl)
+//         .digest("hex"),
+//       title: candidate.title,
+//       org: "Institute of Banking Personnel Selection (IBPS)",
+//       sector: "BANKING",
+//       posts: vacancyData.total > 0 ? String(vacancyData.total) : "Not Announced",
+//       qualification: eligibilityResult.qualification || "Graduate Degree in any discipline",
+//       lastDate: applyEndFallback,
+//       location: "All India",
+//       category: "Banking",
+//       status: "apply",
+//       featured: false,
+//       fees: {
+//         generalObc: String(feeData.categoryWiseFee.general || 850),
+//         scStPwdFemale: String(feeData.categoryWiseFee.sc || 175),
+//         paymentMode: "Online"
+//       },
+//       ageLimit: {
+//       minAge: ageData.minAge,       // e.g., "20"
+//       maxAge: ageData.maxAge,       // e.g., "30"
+//       cutoffDate: "As per official notification",
+//       relaxations: ageData.relaxations
+//   },
+//       links: {
+//         applyOnline: candidate.sourceUrl,
+//         notificationPdf: candidate.advertisementUrl || "",
+//         officialWebsite: "https://www.ibps.in",
+//         sourceUrl: candidate.sourceUrl,
+//       },
+//       importantDates: {
+//         applyEnd: applyEndFallback,
+//         examDate: "To be announced"
+//       }
+//     };
+
+//     results.set(candidate.sourceUrl, exam);
+//   }
+
+//   let saved = 0;
+//   let dataChangesDetected = 0;
+
+//   for (const [sourceUrl, examData] of results.entries()) {
+//     const exam = examData as any;
+
+//     const validSourceUrl = sourceUrl || exam.links?.sourceUrl || exam.title;
+//     const recruitmentId = exam.recruitmentId || crypto
+//       .createHash("sha256")
+//       .update(validSourceUrl)
+//       .digest("hex");
+
+//       const existingExam = await Exam.findOne({ "links.sourceUrl": sourceUrl });
+
+//       if (existingExam && existingExam.importantDates) {
+//       const oldDates = existingExam.importantDates;
+//       const newDates = exam.importantDates || {};
+
+//       // 2. Compare critical dates to see if anything changed on the website
+//       if (
+//         oldDates.applyStart !== newDates.applyStart ||
+//         oldDates.applyEnd !== newDates.applyEnd ||
+//         oldDates.examDate !== newDates.examDate ||
+//         oldDates.admitCardDate !== newDates.admitCardDate ||
+//         oldDates.resultDate !== newDates.resultDate
+//       ) {
+//         dataChangesDetected++;
+        
+//         console.warn(`[IBPS Schedule Update Detected] Exam: "${exam.title}"`);
+//         console.log(`   - Old Exam Date: ${oldDates.examDate || "N/A"} -> New Exam Date: ${newDates.examDate || "N/A"}`);
+//         console.log(`   - Old Last Date: ${oldDates.applyEnd || "N/A"} -> New Last Date: ${newDates.applyEnd || "N/A"}`);
+//       }
+//     }
+
+//     const finalApplyOnline = sanitizeUrl(exam.links?.applyOnline, IBPS_UPDATES_URL) ?? validSourceUrl;
+//     const finalNotificationPdf = sanitizeUrl(exam.links?.notificationPdf, IBPS_UPDATES_URL) ?? "";
+//     const finalAdmitCardUrl = sanitizeUrl(exam.links?.admitCardUrl, IBPS_UPDATES_URL);
+
+//     await Exam.updateOne(
+//       { "links.sourceUrl": sourceUrl },
+//       {
+//         $set: {
+//           recruitmentId, // Ensure recruitmentId is always updated/set and never null
+//           title: exam.title,
+//           org: exam.org,
+//           sector: exam.sector,
+//           posts: exam.posts,
+//           qualification: exam.qualification,
+//           lastDate: exam.lastDate,
+//           location: exam.location,
+//           category: exam.category,
+//           status: exam.status,
+//           featured: exam.featured,
+//           fees: exam.fees,
+//           ageLimit: exam.ageLimit,
+//           links: {
+//           applyOnline: finalApplyOnline,
+//           notificationPdf: finalNotificationPdf,
+//           officialWebsite: "https://www.ibps.in",
+//           sourceUrl: validSourceUrl,
+//           ...(finalAdmitCardUrl ? { admitCardUrl: finalAdmitCardUrl } : {}),
+//       },
+//           importantDates: exam.importantDates,
+//           lastScrapedAt: new Date(),
+//         },
+//       },
+//       {
+//         upsert: true,
+//         runValidators: true,
+//       },
+//     );
+//     saved += 1;
+//   }
+
+//   return {
+//     found: results.size,
+//     saved,
+//     announcements: [...results.values()],
+//   };
+// };
 
 export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
   if (!isAllowedHttpsUrl(IBPS_UPDATES_URL)) {
@@ -470,21 +1223,29 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
     advertisementUrl?: string,
   ) => {
     const lowerTitle = title.toLowerCase();
+    const lowerUrl = sourceUrl.toLowerCase();
+
     if (
-      sourceUrl.includes('/services') || 
-      sourceUrl.includes('/gallery') || 
-      sourceUrl.includes('/contact-us') ||
-      sourceUrl.includes('/about-us') ||
-      sourceUrl.includes('/chairmen') ||
-      sourceUrl.includes('/founders') ||
-      sourceUrl.includes('/governingboard') ||
-      sourceUrl.includes('/directorsmessage') ||
-      sourceUrl.includes('/ourhighlights') ||
-      sourceUrl.includes('/organisational-') ||
-      lowerTitle.includes('organisational') ||
-      lowerTitle.includes('governing board') ||
-      lowerTitle.includes('founders') ||
-      lowerTitle.includes('director')
+      lowerUrl.includes("/services") ||
+      lowerUrl.includes("/gallery") ||
+      lowerUrl.includes("/contact-us") ||
+      lowerUrl.includes("/about-us") ||
+      lowerUrl.includes("/chairmen") ||
+      lowerUrl.includes("/founders") ||
+      lowerUrl.includes("/governingboard") ||
+      lowerUrl.includes("/directorsmessage") ||
+      lowerUrl.includes("/ourhighlights") ||
+      lowerUrl.includes("/organisational-") ||
+      lowerUrl.includes("/careers") ||
+      lowerUrl.includes("/management") ||
+      lowerUrl.includes("/strength") ||
+      lowerTitle.includes("organisational") ||
+      lowerTitle.includes("governing board") ||
+      lowerTitle.includes("founders") ||
+      lowerTitle.includes("director") ||
+      lowerTitle.includes("careers") ||
+      lowerTitle.includes("management & faculty") ||
+      lowerTitle.includes("strengths")
     ) {
       return;
     }
@@ -583,29 +1344,215 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
     });
   }
 
+  const isLikelyPdf = (url?: string): boolean => {
+    if (!url) return false;
+    return isPdfUrl(url) || /\.pdf($|\?)/i.test(url);
+  };
+
+  const findBestPdfUrl = (params: {
+    detailPage?: cheerio.CheerioAPI;
+    baseUrl: string;
+    sourceUrl: string;
+    advertisementUrl?: string;
+    pdfLinks?: Array<{ url: string; label?: string; title?: string }>;
+  }): string | undefined => {
+    const candidates: string[] = [];
+
+    if (params.advertisementUrl) {
+      candidates.push(params.advertisementUrl);
+    }
+
+    if (params.pdfLinks && params.pdfLinks.length > 0) {
+      const preferred = params.pdfLinks.find((item) =>
+        /advertisement|notification|detailed|advt|crp|recruitment|vacancy|corrigendum|information\s*handout|prospectus/i.test(
+          `${item.label || ""} ${item.title || ""} ${item.url}`,
+        ),
+      );
+      if (preferred?.url) candidates.push(preferred.url);
+      for (const item of params.pdfLinks) {
+        if (item.url) candidates.push(item.url);
+      }
+    }
+
+    if (params.detailPage) {
+      params.detailPage("a[href]").each((_idx, el) => {
+        const anchor = params.detailPage!(el);
+        const href = anchor.attr("href");
+        if (!href) return;
+
+        const meta = cleanText(
+          `${anchor.text()} ${anchor.attr("title") || ""} ${href}`,
+        );
+        if (
+          isLikelyPdf(href) ||
+          /\b(pdf|notification|advertisement|advt|circular|prospectus|handout|corrigendum|brochure)\b/i.test(
+            meta,
+          )
+        ) {
+          candidates.push(href);
+        }
+      });
+    }
+
+    if (isLikelyPdf(params.sourceUrl)) {
+      candidates.push(params.sourceUrl);
+    }
+
+    for (const raw of candidates) {
+      const cleaned =
+        sanitizeUrl(raw, params.baseUrl) ?? sanitizeUrl(raw, IBPS_UPDATES_URL);
+      if (cleaned && isAllowedHttpsUrl(cleaned)) {
+        return cleaned;
+      }
+    }
+
+    return undefined;
+  };
+
+  const findNestedPdfUrl = async (
+    detailPage: cheerio.CheerioAPI,
+    baseUrl: string,
+  ): Promise<string | undefined> => {
+    const subPageUrls = new Set<string>();
+
+    detailPage("a[href]").each((_idx, el) => {
+      const anchor = detailPage(el);
+      const href = anchor.attr("href");
+      if (!href) return;
+
+      const label = cleanText(`${anchor.text()} ${anchor.attr("title") || ""}`);
+      const resolved =
+        sanitizeUrl(href, baseUrl) ?? sanitizeUrl(href, IBPS_UPDATES_URL);
+      if (!resolved || !isAllowedHttpsUrl(resolved) || isLikelyPdf(resolved)) {
+        return;
+      }
+
+      if (
+        /crp|recruitment|notification|advertisement|advt|vacancy|po\/mt|clerk|rrb|specialist|careers/i.test(
+          `${label} ${resolved}`,
+        )
+      ) {
+        subPageUrls.add(resolved);
+      }
+    });
+
+    for (const subUrl of [...subPageUrls].slice(0, 3)) {
+      try {
+        const subHtml = await fetchText(subUrl);
+        const subPage = cheerio.load(subHtml);
+        subPage("script, style, noscript, svg").remove();
+        const subPdfLinks = getPdfLinks(subPage, subUrl);
+
+        const nestedPdf = findBestPdfUrl({
+          detailPage: subPage,
+          baseUrl: subUrl,
+          sourceUrl: subUrl,
+          pdfLinks: subPdfLinks,
+        });
+
+        if (nestedPdf) return nestedPdf;
+      } catch {
+        // Ignore unreachable sub-pages.
+      }
+    }
+
+    return undefined;
+  };
+
+  const extractApplyOnlineFromPage = (
+    detailPage: cheerio.CheerioAPI,
+    baseUrl: string,
+  ): string | undefined => {
+    let foundApplyUrl: string | undefined;
+
+    detailPage("a[href]").each((_idx, el) => {
+      if (foundApplyUrl) return;
+      const anchor = detailPage(el);
+      const href = anchor.attr("href");
+      const text = cleanText(
+        `${anchor.text()} ${anchor.attr("title") || ""} ${href || ""}`,
+      );
+
+      if (
+        !href ||
+        !/apply\s*online|online\s*application|click\s*here\s*to\s*apply/i.test(
+          text,
+        )
+      ) {
+        return;
+      }
+
+      const sanitized = sanitizeUrl(href, baseUrl);
+      if (sanitized && isAllowedHttpsUrl(sanitized) && !isLikelyPdf(sanitized)) {
+        foundApplyUrl = sanitized;
+      }
+    });
+
+    return foundApplyUrl;
+  };
+
+  const buildExamLinks = (params: {
+    sourceUrl: string;
+    notificationPdf?: string;
+    admitCardUrl?: string;
+    applyPageUrl?: string;
+  }) => {
+    const cleanSource =
+      sanitizeUrl(params.sourceUrl, IBPS_UPDATES_URL) ?? IBPS_UPDATES_URL;
+    const sourceIsPdf = isLikelyPdf(cleanSource);
+
+    const cleanPdf =
+      sanitizeUrl(params.notificationPdf, cleanSource) ??
+      sanitizeUrl(params.notificationPdf, IBPS_UPDATES_URL) ??
+      (sourceIsPdf ? cleanSource : "");
+
+    const cleanApplyCandidate =
+      sanitizeUrl(params.applyPageUrl, cleanSource) ??
+      sanitizeUrl(params.applyPageUrl, IBPS_UPDATES_URL);
+
+    const cleanApplyOnline =
+      cleanApplyCandidate && !isLikelyPdf(cleanApplyCandidate)
+        ? cleanApplyCandidate
+        : !sourceIsPdf
+          ? cleanSource
+          : "https://www.ibps.in";
+
+    const cleanAdmitCard =
+      sanitizeUrl(params.admitCardUrl, cleanSource) ??
+      sanitizeUrl(params.admitCardUrl, IBPS_UPDATES_URL);
+
+    return {
+      applyOnline: cleanApplyOnline,
+      notificationPdf: cleanPdf,
+      officialWebsite: "https://www.ibps.in",
+      sourceUrl: cleanSource,
+      ...(cleanAdmitCard ? { admitCardUrl: cleanAdmitCard } : {}),
+    };
+  };
+
   const cleanOverviewText = (text: string): string => {
     if (!text) return "";
     return text
-      .replace(/^[\s\-–—_]+/, "") 
-      .replace(/[\s\-–—_]+$/, "") 
-      .replace(/[-–—]{3,}/g, " ") 
-      .replace(/\s+/g, " ")      
+      .replace(/^[\s\-–—_]+/, "")
+      .replace(/[\s\-–—_]+$/, "")
+      .replace(/[-–—]{3,}/g, " ")
+      .replace(/\s+/g, " ")
       .trim();
   };
 
   const parseVacanciesData = (text: string): VacancyResult => {
     if (!text || typeof text !== "string") return { total: 0 };
 
-    const cleanText = text.replace(/\s+/g, " ");
+    const normalized = normalizeScrapedText(text);
     let total = 0;
 
     const patterns = [
       /(?:total\s*(?:posts|vacancies|seats|number)?|number\s*of\s*vacancies|vacancies|posts)\s*(?:is|are|[:\s-])*\s*([\d,]{1,6})/i,
-      /(\d{1,6})\s*(?:posts|vacancies|seats)\s*(?:are\s*available|total)?/i
+      /(\d{1,6})\s*(?:posts|vacancies|seats)\s*(?:are\s*available|total)?/i,
     ];
 
     for (const pattern of patterns) {
-      const match = cleanText.match(pattern);
+      const match = normalized.match(pattern);
       if (match && match[1]) {
         const parsed = parseInt(match[1].replace(/,/g, ""), 10);
         if (!isNaN(parsed) && parsed > 0) {
@@ -619,17 +1566,27 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
   };
 
   const parseCategoryFees = (text: string): CategoryFeeResult => {
-    const defaultFees = { general: 0, obc: 0, sc: 0, st: 0, ews: 0, pwd: 0, female: 0 };
-    
+    const defaultFees = {
+      general: 0,
+      obc: 0,
+      sc: 0,
+      st: 0,
+      ews: 0,
+      pwd: 0,
+      female: 0,
+    };
+
     if (!text || typeof text !== "string") {
       return { applicationFee: 0, categoryWiseFee: defaultFees };
     }
 
-    const cleanText = text.replace(/\s+/g, " ");
+    const normalized = normalizeScrapedText(text);
     let defaultFee = 0;
 
     const extractFeeFromSnippet = (snippet: string): number => {
-      const match = snippet.match(/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{2})?)/i) || snippet.match(/\b([1-9]\d{2,4})\/-\b/);
+      const match =
+        snippet.match(/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{2})?)/i) ||
+        snippet.match(/\b([1-9]\d{2,4})\/-\b/);
       if (match && match[1]) {
         const parsed = parseInt(match[1].replace(/,/g, ""), 10);
         if (!isNaN(parsed) && parsed > 0) return parsed;
@@ -638,23 +1595,26 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
     };
 
     const groupPatterns = [
-      { 
-        regex: /(?:sc\s*\/?\s*st\s*\/?\s*(?:pwd|pwbd))\s*[^\\d]{0,30}((?:rs\.?|inr|₹)?\s*[\d,]+(?:\/)?)/i, 
-        targets: ['sc', 'st', 'pwd'] 
+      {
+        regex:
+          /(?:sc\s*\/?\s*st\s*\/?\s*(?:pwd|pwbd))\s*[^\d]{0,30}((?:rs\.?|inr|₹)?\s*[\d,]+(?:\/)?)/i,
+        targets: ["sc", "st", "pwd"],
       },
-      { 
-        regex: /(?:general\s*\/?\s*obc\s*\/?\s*ews|all\s*other\s*categories?|other\s*than\s*sc)\s*[^\\d]{0,30}((?:rs\.?|inr|₹)?\s*[\d,]+(?:\/)?)/i, 
-        targets: ['general', 'obc', 'ews'] 
+      {
+        regex:
+          /(?:general\s*\/?\s*obc\s*\/?\s*ews|all\s*other\s*categories?|other\s*than\s*sc)\s*[^\d]{0,30}((?:rs\.?|inr|₹)?\s*[\d,]+(?:\/)?)/i,
+        targets: ["general", "obc", "ews"],
       },
-      { 
-        regex: /(?:for\s*all\s*other)\s*[^\\d]{0,30}((?:rs\.?|inr|₹)?\s*[\d,]+(?:\/)?)/i, 
-        targets: ['general', 'obc', 'ews'] 
-      }
+      {
+        regex:
+          /(?:for\s*all\s*other)\s*[^\d]{0,30}((?:rs\.?|inr|₹)?\s*[\d,]+(?:\/)?)/i,
+        targets: ["general", "obc", "ews"],
+      },
     ];
 
     const fees = { ...defaultFees };
     for (const group of groupPatterns) {
-      const match = cleanText.match(group.regex);
+      const match = normalized.match(group.regex);
       if (match && match[1]) {
         const feeVal = extractFeeFromSnippet(match[1]);
         if (feeVal > 0) {
@@ -667,18 +1627,27 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
 
     const extractFeeFor = (keywords: string[]): number => {
       for (const kw of keywords) {
-        const zeroRegex = new RegExp(`\\b${kw}\\b[^\\w]{0,30}\\b(nil|no\\s*fee|exempted|free|\\b0\\b)\\b`, "i");
-        if (zeroRegex.test(cleanText)) return 0;
+        const zeroRegex = new RegExp(
+          `\\b${kw}\\b[^\\w]{0,30}\\b(nil|no\\s*fee|exempted|free|\\b0\\b)\\b`,
+          "i",
+        );
+        if (zeroRegex.test(normalized)) return 0;
 
-        const fwdRegex = new RegExp(`\\b${kw}\\b[^\\d]{0,35}(?:rs\\.?|inr|₹)?\\s*([\\d,]{2,5})`, "i");
-        const fwdMatch = cleanText.match(fwdRegex);
+        const fwdRegex = new RegExp(
+          `\\b${kw}\\b[^\\d]{0,35}(?:rs\\.?|inr|₹)?\\s*([\\d,]{2,5})`,
+          "i",
+        );
+        const fwdMatch = normalized.match(fwdRegex);
         if (fwdMatch && fwdMatch[1]) {
           const parsed = parseInt(fwdMatch[1].replace(/,/g, ""), 10);
           if (!isNaN(parsed)) return parsed;
         }
 
-        const bwdRegex = new RegExp(`(?:rs\\.?|inr|₹)?\\s*([\\d,]{2,5})[^\\d]{0,35}\\b${kw}\\b`, "i");
-        const bwdMatch = cleanText.match(bwdRegex);
+        const bwdRegex = new RegExp(
+          `(?:rs\\.?|inr|₹)?\\s*([\\d,]{2,5})[^\\d]{0,35}\\b${kw}\\b`,
+          "i",
+        );
+        const bwdMatch = normalized.match(bwdRegex);
         if (bwdMatch && bwdMatch[1]) {
           const parsed = parseInt(bwdMatch[1].replace(/,/g, ""), 10);
           if (!isNaN(parsed)) return parsed;
@@ -687,15 +1656,26 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
       return 0;
     };
 
-    if (fees.general === 0) fees.general = extractFeeFor(["general", "ur", "unreserved", "all other"]);
-    if (fees.obc === 0) fees.obc = extractFeeFor(["obc", "other backward class", "bc"]);
-    if (fees.ews === 0) fees.ews = extractFeeFor(["ews", "economically weaker"]);
+    if (fees.general === 0)
+      fees.general = extractFeeFor(["general", "ur", "unreserved", "all other"]);
+    if (fees.obc === 0)
+      fees.obc = extractFeeFor(["obc", "other backward class", "bc"]);
+    if (fees.ews === 0)
+      fees.ews = extractFeeFor(["ews", "economically weaker"]);
     if (fees.sc === 0) fees.sc = extractFeeFor(["sc", "scheduled caste"]);
     if (fees.st === 0) fees.st = extractFeeFor(["st", "scheduled tribe"]);
-    if (fees.pwd === 0) fees.pwd = extractFeeFor(["pwd", "pwbd", "handicapped", "benchmark disabilities"]);
+    if (fees.pwd === 0)
+      fees.pwd = extractFeeFor([
+        "pwd",
+        "pwbd",
+        "handicapped",
+        "benchmark disabilities",
+      ]);
     if (fees.female === 0) fees.female = extractFeeFor(["female", "women"]);
 
-    const generalFeeMatch = cleanText.match(/(?:application fee|fee payable|examination fee|charges)[:\s-]*(?:rs\.?|inr|₹)?\s*([\\d,]{2,5})/i);
+    const generalFeeMatch = normalized.match(
+      /(?:application fee|fee payable|examination fee|charges)[:\s-]*(?:rs\.?|inr|₹)?\s*([\d,]{2,5})/i,
+    );
     if (generalFeeMatch && generalFeeMatch[1]) {
       defaultFee = parseInt(generalFeeMatch[1].replace(/,/g, ""), 10) || 0;
     }
@@ -712,130 +1692,237 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
     };
   };
 
-  
-  const parseAgeLimitData = (text: string): { minAge: string; maxAge: string; relaxations?: string } => {
-  const defaultAge = { minAge: "20", maxAge: "30", relaxations: "OBC: 3 Yrs, SC/ST: 5 Yrs" };
-  if (!text || typeof text !== "string") return defaultAge;
+  const parseAgeLimitData = (
+    text: string,
+  ): { minAge: string; maxAge: string; relaxations?: string } => {
+    const defaultAge = {
+      minAge: "20",
+      maxAge: "30",
+      relaxations: "OBC: 3 Yrs, SC/ST: 5 Yrs",
+    };
+    if (!text || typeof text !== "string") return defaultAge;
 
-  const cleanText = text.replace(/\s+/g, " ");
-  let minAge = "";
-  let maxAge = "";
+    const normalized = normalizeScrapedText(text);
+    let minAge = "";
+    let maxAge = "";
 
-  // 1. Try to catch direct ranges first (e.g., "20 to 30 years", "21-30 years", "Between 20 and 30 years")
-  const rangeMatch = cleanText.match(/(?:between\s*)?(\d{2})\s*(?:to|and|[-–])\s*(\d{2})\s*years?/i);
-  if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
-    minAge = rangeMatch[1];
-    maxAge = rangeMatch[2];
-  }
-
-  // 2. If no range found, search for specific minimum age phrases
-  if (!minAge) {
-    const minMatch = cleanText.match(/(?:minimum\s*age|min\.?\s*age|not\s*less\s*than|not\s*below|above)\s*[:\s-]*(\d{1,2})\s*years?/i);
-    if (minMatch && minMatch[1]) {
-      minAge = minMatch[1];
+    const rangeMatch = normalized.match(
+      /(?:between\s*)?(\d{2})\s*(?:to|and|[-–])\s*(\d{2})\s*years?/i,
+    );
+    if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
+      minAge = rangeMatch[1];
+      maxAge = rangeMatch[2];
     }
-  }
 
-  // 3. If no max found, search for specific maximum age phrases
-  if (!maxAge) {
-    const maxMatch = cleanText.match(/(?:maximum\s*age|max\.?\s*age|not\s*more\s*than|not\s*above|below|up\s*to)\s*[:\s-]*(\d{1,2})\s*years?/i);
-    if (maxMatch && maxMatch[1]) {
-      maxAge = maxMatch[1];
-    }
-  }
-
-  // 4. Final fallback defaults if nothing matched
-  if (!minAge) minAge = "20";
-  if (!maxAge) maxAge = "30";
-
-  // Extract relaxation text dynamically if present
-  const relaxationMatch = cleanText.match(/(?:age\s*relaxation|relaxation\s*of\s*upper\s*age|upper\s*age\s*limit\s*shall\s*be\s*relaxed)[^.]*\./i);
-  const relaxations = relaxationMatch ? relaxationMatch[0] : "OBC: 3 Yrs, SC/ST: 5 Yrs, PwD: 10 Yrs";
-
-  return { minAge, maxAge, relaxations };
-};
-
-const parseExamDate = (text: string): string => {
-  if (!text || typeof text !== "string") return "To be announced";
-  const cleanText = text.replace(/\s+/g, " ");
-
-  const keywordMatch = cleanText.match(
-    /(?:exam(?:ination)?\s*date|held\s*on|tentative\s*date|preliminary\s*exam(?:ination)?|online\s*exam)[^0-9]*(?:[:\s-]*)(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{1,2}(?:st|nd|rd|th)?\s+[a-zA-Z]+\s+\d{4}|[a-zA-Z]+\s+\d{4})/i
-  );
-
-  if (keywordMatch && keywordMatch[1]) {
-    const rawDate = keywordMatch[1].trim();
-    const parsed = Date.parse(rawDate);
-    if (!isNaN(parsed)) {
-      return new Date(parsed).toISOString().split('T')[0];
-    }
-    return rawDate; 
-  }
-
-  // 2. Fallback: Search for general calendar date formats near exam context
-  const generalDateMatch = cleanText.match(/\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/);
-  if (generalDateMatch && generalDateMatch[1]) {
-    const parsed = Date.parse(generalDateMatch[1].replace(/\./g, '-').replace(/\//g, '-'));
-    if (!isNaN(parsed)) {
-      return new Date(parsed).toISOString().split('T')[0];
-    }
-  }
-
-  // 3. Fallback: Look for Month & Year patterns common in IBPS calendars (e.g., "August/September 2026")
-  const monthYearMatch = cleanText.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s*(?:to|-)?\s*(?:January|February|March|April|May|June|July|August|September|October|November|December)?\s*\d{4}/i);
-  if (monthYearMatch) {
-    return monthYearMatch[0];
-  }
-  return "To be announced";
-};
-
-  const extractEligibility = (text: string): { overview: string; qualification?: string } => {
-  if (!text || typeof text !== "string") return { overview: "" };
-
-  const cleanedText = text.replace(/\s+/g, " ");
-  
-  // Improved sentence split that avoids breaking on common abbreviations like B.A., M.Sc., No., etc.
-  const sentences = cleanedText.split(/(?<!\b[A-Z])(?<=[.?!])\s+/);
-  
-  const educationKeywords = [
-    "degree", "graduation", "graduate", "post graduate", "post-graduate",
-    "ug", "pg", "bachelor", "master", "discipline", "qualification", "eligibility"
-  ];
-
-  const matchedSentences: string[] = [];
-  let detectedQualification = "Graduate Degree in any discipline";
-
-  for (const sentence of sentences) {
-    const lower = sentence.toLowerCase();
-    const isEduRelevant = educationKeywords.some((keyword) => lower.includes(keyword));
-    
-    if (isEduRelevant && sentence.length > 15) {
-      matchedSentences.push(sentence.trim());
-      
-      // Check for Postgraduate first so it doesn't get overridden by general 'graduate' matches
-      if (/post\s*graduate|pg|master|doctorate|ph\.?d/i.test(lower)) {
-        detectedQualification = "Postgraduate (PG) / Master's Degree";
-      } else if (/under\s*graduate|ug|bachelor|graduat(e|ion)|degree/i.test(lower)) {
-        detectedQualification = "Undergraduate (UG) / Bachelor's Degree";
+    if (!minAge) {
+      const minMatch = normalized.match(
+        /(?:minimum\s*age|min\.?\s*age|not\s*less\s*than|not\s*below|above)\s*[:\s-]*(\d{1,2})\s*years?/i,
+      );
+      if (minMatch && minMatch[1]) {
+        minAge = minMatch[1];
       }
     }
-  }
 
-  const overview = matchedSentences.length > 0 
-    ? matchedSentences.slice(0, 3).join(" ") 
-    : cleanedText.slice(0, 300);
+    if (!maxAge) {
+      const maxMatch = normalized.match(
+        /(?:maximum\s*age|max\.?\s*age|not\s*more\s*than|not\s*above|below|up\s*to)\s*[:\s-]*(\d{1,2})\s*years?/i,
+      );
+      if (maxMatch && maxMatch[1]) {
+        maxAge = maxMatch[1];
+      }
+    }
 
-  return {
-    overview: typeof cleanOverviewText === "function" ? cleanOverviewText(overview) : overview,
-    qualification: detectedQualification,
+    if (!minAge) minAge = "20";
+    if (!maxAge) maxAge = "30";
+
+    const relaxationMatch = normalized.match(
+      /(?:age\s*relaxation|relaxation\s*of\s*upper\s*age|upper\s*age\s*limit\s*shall\s*be\s*relaxed)[^.]*\./i,
+    );
+    const relaxations = relaxationMatch
+      ? relaxationMatch[0]
+      : "OBC: 3 Yrs, SC/ST: 5 Yrs, PwD: 10 Yrs";
+
+    return { minAge, maxAge, relaxations };
   };
-};
+
+  // Updated ONLY parseExamDate to parse Indian DD/MM/YYYY dates and schedule lines accurately
+  const parseExamDate = (text: string): string => {
+    if (!text || typeof text !== "string") return "To be announced";
+    const normalized = normalizeScrapedText(text);
+
+    const monthMap: Record<string, string> = {
+      jan: "01",
+      january: "01",
+      feb: "02",
+      february: "02",
+      mar: "03",
+      march: "03",
+      apr: "04",
+      april: "04",
+      may: "05",
+      jun: "06",
+      june: "06",
+      jul: "07",
+      july: "07",
+      aug: "08",
+      august: "08",
+      sep: "09",
+      sept: "09",
+      september: "09",
+      oct: "10",
+      october: "10",
+      nov: "11",
+      november: "11",
+      dec: "12",
+      december: "12",
+    };
+
+    const formatNumericDate = (
+      dayStr: string,
+      monthStr: string,
+      yearStr: string,
+    ): string | undefined => {
+      const day = parseInt(dayStr, 10);
+      const month = parseInt(monthStr, 10);
+      let year = parseInt(yearStr, 10);
+      if (year < 100) year += 2000;
+      if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    };
+
+    const parseDateCandidate = (raw: string): string | undefined => {
+      const cleaned = raw
+        .replace(/\b(st|nd|rd|th)\b/gi, "")
+        .replace(/,/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const dmyNumeric = cleaned.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
+      if (dmyNumeric) {
+        return formatNumericDate(dmyNumeric[1], dmyNumeric[2], dmyNumeric[3]);
+      }
+
+      const dmyNamed = cleaned.match(/^(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})$/);
+      if (dmyNamed) {
+        const m = monthMap[dmyNamed[2].toLowerCase()];
+        if (m) return formatNumericDate(dmyNamed[1], m, dmyNamed[3]);
+      }
+
+      const mdyNamed = cleaned.match(/^([a-zA-Z]+)\s+(\d{1,2})\s+(\d{4})$/);
+      if (mdyNamed) {
+        const m = monthMap[mdyNamed[1].toLowerCase()];
+        if (m) return formatNumericDate(mdyNamed[2], m, mdyNamed[3]);
+      }
+
+      const parsed = Date.parse(cleaned);
+      if (!isNaN(parsed)) {
+        return new Date(parsed).toISOString().split("T")[0];
+      }
+      return undefined;
+    };
+
+    const dateTokenPattern =
+      "\\d{1,2}[-/.]\\d{1,2}[-/.]\\d{2,4}|\\d{1,2}(?:st|nd|rd|th)?\\s+[a-zA-Z]+\\s+\\d{4}|[a-zA-Z]+\\s+\\d{1,2}(?:st|nd|rd|th)?\\s+\\d{4}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\\s+\\d{4}";
+
+    const keywordRegex = new RegExp(
+      `(?:exam(?:ination)?\\s*date|held\\s*on|tentative\\s*(?:exam(?:ination)?\\s*)?date|preliminary\\s*exam(?:ination)?|main(?:s)?\\s*exam(?:ination)?|single\\s*exam(?:ination)?|online\\s*exam(?:ination)?|schedule)[:\\s-]{0,45}(${dateTokenPattern})`,
+      "i",
+    );
+    const keywordMatch = normalized.match(keywordRegex);
+
+    if (keywordMatch && keywordMatch[1]) {
+      const formatted = parseDateCandidate(keywordMatch[1]);
+      if (formatted) return formatted;
+      return keywordMatch[1].trim();
+    }
+
+    const generalDateMatch = normalized.match(
+      /\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/,
+    );
+    if (generalDateMatch && generalDateMatch[1]) {
+      const formatted = parseDateCandidate(generalDateMatch[1]);
+      if (formatted) return formatted;
+    }
+
+    const monthYearMatch = normalized.match(
+      /(?:January|February|March|April|May|June|July|August|September|October|November|December)\s*(?:to|-|\/)?\s*(?:January|February|March|April|May|June|July|August|September|October|November|December)?\s*\d{4}/i,
+    );
+    if (monthYearMatch) {
+      return monthYearMatch[0];
+    }
+    return "To be announced";
+  };
+
+  const extractEligibility = (
+    text: string,
+  ): { overview: string; qualification?: string } => {
+    if (!text || typeof text !== "string") return { overview: "" };
+
+    const normalized = normalizeScrapedText(text);
+    const sentences = normalized.split(/(?<!\b[A-Z])(?<=[.?!])\s+/);
+
+    const educationKeywords = [
+      "degree",
+      "graduation",
+      "graduate",
+      "post graduate",
+      "post-graduate",
+      "ug",
+      "pg",
+      "bachelor",
+      "master",
+      "discipline",
+      "qualification",
+      "eligibility",
+    ];
+
+    const matchedSentences: string[] = [];
+    let detectedQualification = "Graduate Degree in any discipline";
+
+    for (const sentence of sentences) {
+      const lower = sentence.toLowerCase();
+      const isEduRelevant = educationKeywords.some((keyword) =>
+        lower.includes(keyword),
+      );
+
+      if (isEduRelevant && sentence.length > 15) {
+        matchedSentences.push(sentence.trim());
+
+        if (/post\s*graduate|pg|master|doctorate|ph\.?d/i.test(lower)) {
+          detectedQualification = "Postgraduate (PG) / Master's Degree";
+        } else if (
+          /under\s*graduate|ug|bachelor|graduat(e|ion)|degree/i.test(lower)
+        ) {
+          detectedQualification = "Undergraduate (UG) / Bachelor's Degree";
+        }
+      }
+    }
+
+    const overview =
+      matchedSentences.length > 0
+        ? matchedSentences.slice(0, 3).join(" ")
+        : normalized.slice(0, 300);
+
+    return {
+      overview:
+        typeof cleanOverviewText === "function"
+          ? cleanOverviewText(overview)
+          : overview,
+      qualification: detectedQualification,
+    };
+  };
 
   const results = new Map<string, any>();
 
   for (const candidate of candidatesMap.values()) {
     let detailHtml = "";
     let aggregatedText = "";
+
+    const fallbackPdfUrl = findBestPdfUrl({
+      baseUrl: candidate.sourceUrl,
+      sourceUrl: candidate.sourceUrl,
+      advertisementUrl: candidate.advertisementUrl,
+    });
 
     if (!isPdfUrl(candidate.sourceUrl)) {
       try {
@@ -845,7 +1932,7 @@ const parseExamDate = (text: string): string => {
           .createHash("sha256")
           .update(candidate.sourceUrl)
           .digest("hex");
-          
+
         results.set(candidate.sourceUrl, {
           recruitmentId,
           title: candidate.title,
@@ -856,19 +1943,18 @@ const parseExamDate = (text: string): string => {
           lastDate: "2026-12-31",
           fees: {
             generalObc: "850",
-            scStPwdFemale: "175"
+            scStPwdFemale: "175",
           },
           ageLimit: {
             minAge: "20",
             maxAge: "30",
             cutoffDate: "As per official notification",
-            relaxations: "OBC: 3 Yrs, SC/ST: 5 Yrs"
+            relaxations: "OBC: 3 Yrs, SC/ST: 5 Yrs",
           },
-          links: {
-            applyOnline: candidate.sourceUrl,
-            officialWebsite: "https://www.ibps.in",
+          links: buildExamLinks({
             sourceUrl: candidate.sourceUrl,
-          },
+            notificationPdf: fallbackPdfUrl,
+          }),
         });
         continue;
       }
@@ -878,58 +1964,126 @@ const parseExamDate = (text: string): string => {
     detailPage("script, style, noscript, svg").remove();
 
     const detailText = getDocumentText(detailPage);
-    aggregatedText += " " + detailText;
+    aggregatedText = normalizeScrapedText(`${aggregatedText} ${detailText}`);
 
     const pdfLinks = getPdfLinks(detailPage, candidate.sourceUrl);
-    const admitCardUrl = getAdmitCardUrl(detailPage, candidate.sourceUrl, pdfLinks);
+    const admitCardUrl = getAdmitCardUrl(
+      detailPage,
+      candidate.sourceUrl,
+      pdfLinks,
+    );
+    const applyPageUrl = detailHtml
+      ? extractApplyOnlineFromPage(detailPage, candidate.sourceUrl)
+      : undefined;
+
     const extractedFields = extractExamFields(aggregatedText);
     const eligibilityResult = extractEligibility(aggregatedText);
-    
-    let vacancyData = parseVacanciesData(aggregatedText);
-    let feeData = parseCategoryFees(aggregatedText);
-    let ageData = parseAgeLimitData(aggregatedText);
 
-    let advertisementPdf = candidate.advertisementUrl
+    let vacancyData = parseVacanciesData(
+      extractSectionWindow(
+        aggregatedText,
+        /vacancy|vacancies|post|posts/i,
+        600,
+      ),
+    );
+    let feeData = parseCategoryFees(
+      extractSectionWindow(
+        aggregatedText,
+        /application\s*fee|intimation\s*charges|fee\s*payable/i,
+        600,
+      ),
+    );
+    let ageData = parseAgeLimitData(
+      extractSectionWindow(
+        aggregatedText,
+        /age\s*limit|upper\s*age|eligibility\s*criteria/i,
+        600,
+      ),
+    );
+
+    const advertisementPdf = candidate.advertisementUrl
       ? { url: candidate.advertisementUrl, label: "advertisement" }
       : pdfLinks.find(({ url, label }) =>
           /advertisement|notification|detailed|advt|crp|recruitment|information\s*handout/i.test(
             `${label} ${url}`,
           ),
-        );
+        ) ?? pdfLinks[0];
 
-    if (!advertisementPdf && pdfLinks.length > 0) {
-      advertisementPdf = pdfLinks[0];
+    let resolvedNotificationPdf = findBestPdfUrl({
+      detailPage: detailHtml ? detailPage : undefined,
+      baseUrl: candidate.sourceUrl,
+      sourceUrl: candidate.sourceUrl,
+      advertisementUrl: advertisementPdf?.url ?? candidate.advertisementUrl,
+      pdfLinks,
+    });
+
+    if (!resolvedNotificationPdf && detailHtml) {
+      resolvedNotificationPdf = await findNestedPdfUrl(
+        detailPage,
+        candidate.sourceUrl,
+      );
     }
 
-    if (advertisementPdf) {
-      const advertisementUrl = advertisementPdf.url;
-      const filename = `${crypto.createHash("sha256").update(advertisementUrl).digest("hex")}.pdf`;
+    if (resolvedNotificationPdf) {
+      const filename = `${crypto.createHash("sha256").update(resolvedNotificationPdf).digest("hex")}.pdf`;
       const absolutePath = path.join(UPLOAD_DIR, filename);
 
       try {
-        await downloadPdf(advertisementUrl, absolutePath);
+        await downloadPdf(resolvedNotificationPdf, absolutePath);
 
         const pdfBuffer = await fs.readFile(absolutePath);
         const parsed = await pdfParse(pdfBuffer);
-        const pdfText = parsed.text ?? "";    
-        
-        aggregatedText += " " + pdfText;
+        const pdfText = normalizeScrapedText(parsed.text ?? "");
+
+        aggregatedText = normalizeScrapedText(`${aggregatedText} ${pdfText}`);
 
         const pdfFields = extractExamFields(pdfText);
-        const pdfEligibility = 
-        typeof pdfFields.eligibility?.overview === "string" &&
-        pdfFields.eligibility.overview.trim().length >= 20
-          ? { overview: pdfFields.eligibility.overview.trim(), qualification: "Graduate Degree in any discipline" }
-          : extractEligibility(pdfText);
+        const pdfEligibility =
+          typeof pdfFields.eligibility?.overview === "string" &&
+          pdfFields.eligibility.overview.trim().length >= 20
+            ? {
+                overview: pdfFields.eligibility.overview.trim(),
+                qualification: "Graduate Degree in any discipline",
+              }
+            : extractEligibility(pdfText);
 
-        vacancyData = parseVacanciesData(aggregatedText);
-        feeData = parseCategoryFees(aggregatedText);
-        let extractedExamDate = parseExamDate(aggregatedText);
+        vacancyData = parseVacanciesData(
+          extractSectionWindow(
+            aggregatedText,
+            /vacancy|vacancies|post|posts/i,
+            600,
+          ),
+        );
+        feeData = parseCategoryFees(
+          extractSectionWindow(
+            aggregatedText,
+            /application\s*fee|intimation\s*charges|fee\s*payable/i,
+            600,
+          ),
+        );
+        ageData = parseAgeLimitData(
+          extractSectionWindow(
+            aggregatedText,
+            /age\s*limit|upper\s*age|eligibility\s*criteria/i,
+            600,
+          ),
+        );
+        const extractedExamDate = parseExamDate(
+          extractSectionWindow(
+            aggregatedText,
+            /schedule|examination|preliminary|main\s*exam|call\s*letter/i,
+            600,
+          ),
+        );
 
-        const finalEligibility = pdfEligibility.overview ? pdfEligibility : eligibilityResult;
+        const finalEligibility = pdfEligibility.overview
+          ? pdfEligibility
+          : eligibilityResult;
 
-        const applyEndStr = extractedFields.dates?.applicationEndDate 
-          ? new Date(extractedFields.dates.applicationEndDate).toISOString().split('T')[0]
+        const applyEndStr = extractedFields.dates?.applicationEndDate
+          ? new Date(extractedFields.dates.applicationEndDate)
+              .toISOString()
+              .split("T")[0]
           : "2026-12-31";
 
         const exam: any = {
@@ -940,8 +2094,11 @@ const parseExamDate = (text: string): string => {
           title: candidate.title,
           org: "Institute of Banking Personnel Selection (IBPS)",
           sector: "BANKING",
-          posts: vacancyData.total > 0 ? String(vacancyData.total) : "Not Announced",
-          qualification: finalEligibility.qualification || "Graduate Degree in any discipline",
+          posts:
+            vacancyData.total > 0 ? String(vacancyData.total) : "Not Announced",
+          qualification:
+            finalEligibility.qualification ||
+            "Graduate Degree in any discipline",
           lastDate: applyEndStr,
           location: "All India",
           category: "Banking",
@@ -950,27 +2107,31 @@ const parseExamDate = (text: string): string => {
           fees: {
             generalObc: String(feeData.categoryWiseFee.general || 850),
             scStPwdFemale: String(feeData.categoryWiseFee.sc || 175),
-            paymentMode: "Online (UPI, Net Banking, Debit/Credit Card)"
+            paymentMode: "Online (UPI, Net Banking, Debit/Credit Card)",
           },
           ageLimit: {
-          minAge: ageData.minAge,
-          maxAge: ageData.maxAge,
-          cutoffDate: "As per official notification",
-          relaxations: ageData.relaxations
-        },
-          links: {
-            applyOnline: candidate.sourceUrl,
-            notificationPdf: advertisementUrl,
-            officialWebsite: "https://www.ibps.in",
-            sourceUrl: candidate.sourceUrl,
+            minAge: ageData.minAge,
+            maxAge: ageData.maxAge,
+            cutoffDate: "As per official notification",
+            relaxations: ageData.relaxations,
           },
+          links: buildExamLinks({
+            sourceUrl: candidate.sourceUrl,
+            notificationPdf: resolvedNotificationPdf,
+            admitCardUrl,
+            applyPageUrl,
+          }),
           importantDates: {
-            applyStart: extractedFields.dates?.applicationStartDate ? new Date(extractedFields.dates.applicationStartDate).toISOString().split('T')[0] : undefined,
+            applyStart: extractedFields.dates?.applicationStartDate
+              ? new Date(extractedFields.dates.applicationStartDate)
+                  .toISOString()
+                  .split("T")[0]
+              : undefined,
             applyEnd: applyEndStr,
             examDate: extractedExamDate,
-            admitCardDate: admitCardUrl || "4 Days before Exam",
-            resultDate: "To be announced"
-          }
+            admitCardDate: "4 Days before Exam",
+            resultDate: "To be announced",
+          },
         };
 
         results.set(candidate.sourceUrl, exam);
@@ -980,9 +2141,19 @@ const parseExamDate = (text: string): string => {
       }
     }
 
-    const applyEndFallback = extractedFields.dates?.applicationEndDate 
-      ? new Date(extractedFields.dates.applicationEndDate).toISOString().split('T')[0]
+    const applyEndFallback = extractedFields.dates?.applicationEndDate
+      ? new Date(extractedFields.dates.applicationEndDate)
+          .toISOString()
+          .split("T")[0]
       : "2026-12-31";
+
+    const fallbackExamDate = parseExamDate(
+      extractSectionWindow(
+        aggregatedText,
+        /schedule|examination|preliminary|main\s*exam|call\s*letter/i,
+        600,
+      ),
+    );
 
     const exam: any = {
       recruitmentId: crypto
@@ -992,8 +2163,10 @@ const parseExamDate = (text: string): string => {
       title: candidate.title,
       org: "Institute of Banking Personnel Selection (IBPS)",
       sector: "BANKING",
-      posts: vacancyData.total > 0 ? String(vacancyData.total) : "Not Announced",
-      qualification: eligibilityResult.qualification || "Graduate Degree in any discipline",
+      posts:
+        vacancyData.total > 0 ? String(vacancyData.total) : "Not Announced",
+      qualification:
+        eligibilityResult.qualification || "Graduate Degree in any discipline",
       lastDate: applyEndFallback,
       location: "All India",
       category: "Banking",
@@ -1002,24 +2175,24 @@ const parseExamDate = (text: string): string => {
       fees: {
         generalObc: String(feeData.categoryWiseFee.general || 850),
         scStPwdFemale: String(feeData.categoryWiseFee.sc || 175),
-        paymentMode: "Online"
+        paymentMode: "Online",
       },
       ageLimit: {
-      minAge: ageData.minAge,       // e.g., "20"
-      maxAge: ageData.maxAge,       // e.g., "30"
-      cutoffDate: "As per official notification",
-      relaxations: ageData.relaxations
-  },
-      links: {
-        applyOnline: candidate.sourceUrl,
-        notificationPdf: candidate.advertisementUrl || "",
-        officialWebsite: "https://www.ibps.in",
-        sourceUrl: candidate.sourceUrl,
+        minAge: ageData.minAge,
+        maxAge: ageData.maxAge,
+        cutoffDate: "As per official notification",
+        relaxations: ageData.relaxations,
       },
+      links: buildExamLinks({
+        sourceUrl: candidate.sourceUrl,
+        notificationPdf: resolvedNotificationPdf,
+        admitCardUrl,
+        applyPageUrl,
+      }),
       importantDates: {
         applyEnd: applyEndFallback,
-        examDate: "To be announced"
-      }
+        examDate: fallbackExamDate,
+      },
     };
 
     results.set(candidate.sourceUrl, exam);
@@ -1031,19 +2204,28 @@ const parseExamDate = (text: string): string => {
   for (const [sourceUrl, examData] of results.entries()) {
     const exam = examData as any;
 
-    const validSourceUrl = sourceUrl || exam.links?.sourceUrl || exam.title;
-    const recruitmentId = exam.recruitmentId || crypto
-      .createHash("sha256")
-      .update(validSourceUrl)
-      .digest("hex");
+    const resolvedLinks = buildExamLinks({
+      sourceUrl: exam.links?.sourceUrl || sourceUrl,
+      notificationPdf: exam.links?.notificationPdf,
+      admitCardUrl: exam.links?.admitCardUrl,
+      applyPageUrl: exam.links?.applyOnline,
+    });
 
-      const existingExam = await Exam.findOne({ "links.sourceUrl": sourceUrl });
+    const recruitmentId =
+      exam.recruitmentId ||
+      crypto
+        .createHash("sha256")
+        .update(resolvedLinks.sourceUrl)
+        .digest("hex");
 
-      if (existingExam && existingExam.importantDates) {
+    const existingExam = await Exam.findOne({
+      "links.sourceUrl": resolvedLinks.sourceUrl,
+    });
+
+    if (existingExam && existingExam.importantDates) {
       const oldDates = existingExam.importantDates;
       const newDates = exam.importantDates || {};
 
-      // 2. Compare critical dates to see if anything changed on the website
       if (
         oldDates.applyStart !== newDates.applyStart ||
         oldDates.applyEnd !== newDates.applyEnd ||
@@ -1052,18 +2234,24 @@ const parseExamDate = (text: string): string => {
         oldDates.resultDate !== newDates.resultDate
       ) {
         dataChangesDetected++;
-        
-        console.warn(`[IBPS Schedule Update Detected] Exam: "${exam.title}"`);
-        console.log(`   - Old Exam Date: ${oldDates.examDate || "N/A"} -> New Exam Date: ${newDates.examDate || "N/A"}`);
-        console.log(`   - Old Last Date: ${oldDates.applyEnd || "N/A"} -> New Last Date: ${newDates.applyEnd || "N/A"}`);
+
+        console.warn(
+          `[IBPS Schedule Update Detected] Exam: "${exam.title}"`,
+        );
+        console.log(
+          `   - Old Exam Date: ${oldDates.examDate || "N/A"} -> New Exam Date: ${newDates.examDate || "N/A"}`,
+        );
+        console.log(
+          `   - Old Last Date: ${oldDates.applyEnd || "N/A"} -> New Last Date: ${newDates.applyEnd || "N/A"}`,
+        );
       }
     }
 
     await Exam.updateOne(
-      { "links.sourceUrl": sourceUrl },
+      { "links.sourceUrl": resolvedLinks.sourceUrl },
       {
         $set: {
-          recruitmentId, // Ensure recruitmentId is always updated/set and never null
+          recruitmentId,
           title: exam.title,
           org: exam.org,
           sector: exam.sector,
@@ -1076,7 +2264,7 @@ const parseExamDate = (text: string): string => {
           featured: exam.featured,
           fees: exam.fees,
           ageLimit: exam.ageLimit,
-          links: exam.links,
+          links: resolvedLinks,
           importantDates: exam.importantDates,
           lastScrapedAt: new Date(),
         },
