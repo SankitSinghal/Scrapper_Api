@@ -1390,7 +1390,7 @@ export const scrapeIBPSUpdates = async (): Promise<ScraperResult> => {
           )
         ) {
           candidates.push(href);
-        }
+        }                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
       });
     }
 
